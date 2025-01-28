@@ -2,7 +2,7 @@
 
 ## Data Overview by Phases
 
-![visual flow of data and processing](architecture.png)
+![visual flow of data and processing](img/architecture-flow.png)
 
 1. `Terms` (by sport)
    * Words and phrases likely to be said by commentators.
@@ -42,3 +42,5 @@
      for producing attractive results based on filtering, grouping, and aggregating event data.
      (AKA "pivot tables", but not exposed to users as an editable pivot table, nor even
      necessarily showing certain results as a table at all.)
+
+![class relationships](img/architecture-classes.png)

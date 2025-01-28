@@ -5,7 +5,7 @@
 Multiple stat lovers provide running play-by-play commentary on a game of Ultimate;
 detailed statistics are derived including team, player, and time-based breakdowns.
 
-![inspirational image](docs/inspiration.webp)
+![inspirational image](docs/img/inspiration.webp)
 
 ## Objectives
 
