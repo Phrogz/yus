@@ -1,0 +1,9 @@
+/.vscode
+.venv
+
+# Heavy files
+*.mov
+*.ogg
+*.pkl
+.DS_Store
+__pycache__/

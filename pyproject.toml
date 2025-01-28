@@ -1,0 +1,21 @@
+[project]
+name = "yus"
+version = "0.1"
+description = "Derive statistics for Ultimate games based on informal play-by-play commentary."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [{ name = "Gavin Kistner", email = "gavin@phrogz.net" }]
+
+dependencies = [
+    "ruff>=0.9.3",
+    "pydantic>=2.10.6",
+    "flask>=3.0.3",
+    "dash>=2.18.2",
+    "pytest>=8.3.4",
+    "google-cloud-speech>=2.30.0",
+    "pandas>=2.2.3",
+]
+
+[tool.ruff]
+line-length = 140
+select = ["E", "F", "W", "C90"]

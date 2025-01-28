@@ -1,0 +1,60 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Python: Current File",
+				"type": "python",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal",
+				"env": {
+					"PYTHONPATH": "${workspaceFolder}"
+				}
+			}
+		]
+	},
+	"settings": {
+		"editor.formatOnSave": true,
+		"explorer.excludeGitIgnore": true,
+		"notebook.defaultFormatter": "charliermarsh.ruff",
+		"[python]": {
+			"editor.formatOnSave": true,
+			"editor.codeActionsOnSave": {
+				"source.fixAll": "explicit",
+				"source.organizeImports": "explicit"
+			},
+			"editor.defaultFormatter": "charliermarsh.ruff",
+			"editor.rulers": [
+				140
+			]
+		},
+		"python.analysis.typeCheckingMode": "strict",
+		"[markdown]": {
+			"editor.rulers": [
+				120
+			]
+		},
+		"markdownlint.config": {
+			"MD013": {
+				"line_length": 120
+			}
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"ms-python.python", // Python extension by Microsoft
+			"ms-python.debugpy", // Python debugging
+			"ms-python.vscode-pylance" // Python type hinting
+			"charliermarsh.ruff", // Ruff linter and formatter for Python
+			"yzhang.markdown-all-in-one", // Markdown All in One
+			"DavidAnson.vscode-markdownlint", // Markdown linting
+			"tamasfe.even-better-toml", // TOML support
+		]
+	}
+}
