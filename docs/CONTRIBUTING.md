@@ -80,9 +80,18 @@ code yus.code-workspace
 Once you've done work that you feel is good (or ready for discussion), push your work to GitHub and
 [create a Pull Request from your fork][4].
 
+### No, Fork You!
+
+Not interested in forking? Want to be a contributor on the official repo? That's fine!
+Send Gavin a message (303.408.0101) or a email (gavin@phrogz.net) with your GitHub username, and he'll
+add you to the contributor list so you can help maintain the project.
+The `main` branch is locked down, so you'll need to create your own branch(es) in git for your work
+and then [create a local Pull Request][6] to get your work reviewed and merged in.
+
 [0]: https://drive.google.com/drive/folders/19bUv4njVPwTfGE1zKe0FUus2DssEI4W1?usp=sharing
 [1]: https://git-scm.com/downloads
 [2]: https://code.visualstudio.com/Download
 [3]: https://docs.astral.sh/uv/getting-started/installation/
 [4]: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request-from-a-fork
 [5]: https://github.com/Phrogz/yus/issues/1
+[6]: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request
