@@ -20,46 +20,46 @@ detailed statistics are derived including team, player, and time-based breakdown
 
 ### Illustrative Examples
 
-#### Gameplay vs. Subs
+#### Game play vs. Subs
 
-| Commentator #1                                     | Commentator #2                                         |
-|----------------------------------------------------|--------------------------------------------------------|
-| Tristan has the disc.                              | White team starts with Tristan, Joe, Emily, Matt,      |
-|                                                    | Drew. Dark team starts with James, Christian, Will,    |
-|                                                    | Abby, Parm.                                            |
-| Pull!                                              | Tristan Pulls.                                         |
-| Parm catches the pull.                             |                                                        |
-| Flick to Christian.                                |                                                        |
-| Scoob. James catches.                              |                                                        |
-| Backhand. Glass. Tristan Ds it.                    |                                                        |
-| Tristan picks up for white.                        |                                                        |
-| Tristan hammer. Joe scores.                        |                                                        |
-| James picks up.                                    |                                                        |
-| Backhand huck.                                     | Christian subs off. Angel subs on.                     |
-| Off the net. Angel gets it.                        |                                                        |
-| Backhand to Parm for a score.                      | Emily subs off. Matt off. Ari and Ben sub on.          |
-| ...                                                | ...                                                    |
+| Commentator #1                                  | Commentator #2                                         |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| Tristan has the disc.                           | White team starts with Tristan, Joe, Emily, Matt,      |
+|                                                 | Drew. Dark team starts with James, Christian, Will,    |
+|                                                 | Abby, Parm.                                            |
+| Pull!                                           | Tristan Pulls.                                         |
+| Parm catches the pull.                          |                                                        |
+| Flick to Christian.                             |                                                        |
+| Scoob. James catches.                           |                                                        |
+| Backhand. Glass. Tristan Ds it.                 |                                                        |
+| Tristan picks up for white.                     |                                                        |
+| Tristan hammer. Joe scores.                     |                                                        |
+| James picks up.                                 |                                                        |
+| Backhand huck.                                  | Christian subs off. Angel subs on.                     |
+| Off the net. Angel gets it.                     |                                                        |
+| Backhand to Parm for a score.                   | Emily subs off. Matt off. Ari and Ben sub on.          |
+| ...                                             | ...                                                    |
 
 #### One-to-a-Team
 
-| Commentator #1                                     | Commentator #2                                         |
-|----------------------------------------------------|--------------------------------------------------------|
-| I’m watching white, starting with Tristan,         | I’m watching black shirts. James, Christian,           |
-| Joe, Emily, Matt, and Drew. Tristan to pull.       | Will, Abby, Parm on the field to receive.              |
-|                                                    |                                                        |
-| Tristan pulls!                                     | Go!                                                    |
-|                                                    | Parm receives, flicks to Christian.                    |
-|                                                    | Christian scoober to James.                            |
-|                                                    | Backhand to Will bounces off the glass; turnover.      |
-| Tristan knocks it down, picks it up.               |                                                        |
-| Hammer huck to Joe in the endzone for a score.     | Christian scored on.                                   |
-|                                                    | Christian subbing off. James picks up. Angel comes on. |
-|                                                    | James puts it deep; bounces off the net.               |
-|                                                    | Angel catches.                                         |
-| Nobody covering Angel.                             | Short put to Parm in the endzone.                      |
-| Drew outpaced by Parm.                             | Emily and Matt subbing off.                            |
-|                                                    | Ari on. Ben on.                                        |
-| ...                                                | ...                                                    |
+| Commentator #1                                  | Commentator #2                                         |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| I’m watching white, starting with Tristan,      | I’m watching black shirts. James, Christian,           |
+| Joe, Emily, Matt, and Drew. Tristan to pull.    | Will, Abby, Parm on the field to receive.              |
+|                                                 |                                                        |
+| Tristan pulls!                                  | Go!                                                    |
+|                                                 | Parm receives, flicks to Christian.                    |
+|                                                 | Christian scoober to James.                            |
+|                                                 | Backhand to Will bounces off the glass; turnover.      |
+| Tristan knocks it down, picks it up.            |                                                        |
+| Hammer huck to Joe in the end zone for a score. | Christian scored on.                                   |
+|                                                 | Christian subbing off. James picks up. Angel comes on. |
+|                                                 | James puts it deep; bounces off the net.               |
+|                                                 | Angel catches.                                         |
+| Nobody covering Angel.                          | Short put to Parm in the end zone.                     |
+| Drew outpaced by Parm.                          | Emily and Matt subbing off.                            |
+|                                                 | Ari on. Ben on.                                        |
+| ...                                             | ...                                                    |
 
 #### Commentator per player
 

@@ -9,7 +9,7 @@
 		"configurations": [
 			{
 				"name": "Python: Current File",
-				"type": "python",
+				"type": "debugpy",
 				"request": "launch",
 				"program": "${file}",
 				"console": "integratedTerminal",
@@ -44,13 +44,30 @@
 			"MD013": {
 				"line_length": 120
 			}
-		}
+		},
+		"cSpell.words": [
+			"Connor",
+			"debugpy",
+			"Deepgram",
+			"Federbusch",
+			"Kaia",
+			"Killian",
+			"Krisp",
+			"monoaural",
+			"Pikachu",
+			"pylance",
+			"scoob",
+			"scoober",
+			"thumber",
+			"venv",
+			"Whitlock",
+		]
 	},
 	"extensions": {
 		"recommendations": [
 			"ms-python.python", // Python extension by Microsoft
 			"ms-python.debugpy", // Python debugging
-			"ms-python.vscode-pylance" // Python type hinting
+			"ms-python.vscode-pylance", // Python type hinting
 			"charliermarsh.ruff", // Ruff linter and formatter for Python
 			"yzhang.markdown-all-in-one", // Markdown All in One
 			"DavidAnson.vscode-markdownlint", // Markdown linting
