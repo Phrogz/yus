@@ -2776,7 +2776,7 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw( 55.1, TW, "close crop",     BH, DP, "emily",          Y,   N,   N,   N), # backhand dump to emily
         throw( 57.1, TW, "emily",          BH, SW, "glasses",        Y,   N,   N,   N), # backhand swing to glasses
         throw( 60.0, TW, "glasses",        FL, ZZ, "kaia",           N,   N,   N,   N), # flick to kaia deed by somebody
-        infract(61.0, TB, "emily", TW, "glasses"),
+
         defns(61.35, TB, ZZ, N),                                                        # deed by somebody on dark
         throw( 72.0, TB, "blue",           BH, SW, "red stripe",     Y,   N,   N,   N), # picked up by blue on dark; backhand swing to red stripe
         throw( 74.0, TB, "red stripe",     BH, ZZ, "yellow border",  Y,   N,   N,   N), # backhand to yellow border
