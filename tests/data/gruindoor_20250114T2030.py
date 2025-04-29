@@ -2750,6 +2750,21 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
             intercepted=intercepted,
         )
 
+    def infract(offset: float,
+                called_by_plyr: str,
+                called_by_team: str,
+                called_on_plyr: str,
+                called_on_team: str,
+                contest: bool=False) -> ultimate.Infraction:
+
+        return ultimate.Infraction(when=stamp(offset),
+                                   team=called_by_team,
+                                   player=called_by_plyr,
+                                   called_on_team=called_on_team,
+                                   called_on_plyr=called_on_plyr,
+                                   contested=contest)
+
+
     stream = yus.EventStream(transcript=transcript, game=transcript.game)
 
     # fmt: off
