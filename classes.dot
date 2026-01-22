@@ -1,0 +1,14 @@
+digraph "classes" {
+rankdir=BT
+charset="utf-8"
+"yus.Event" [color="black", fontcolor="black", label=<{Event|when : datetime<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"yus.EventStream" [color="black", fontcolor="black", label=<{EventStream|events : list[Event]<br ALIGN="LEFT"/>game : Game \| None<br ALIGN="LEFT"/>transcript : Transcript \| None<br ALIGN="LEFT"/>|add(evt: Event): EventStream<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"yus.Game" [color="black", fontcolor="black", label=<{Game|event_streams : Optional[list[EventStream]]<br ALIGN="LEFT"/>official_stream : EventStream \| None<br ALIGN="LEFT"/>sport : Optional[str]<br ALIGN="LEFT"/>teams : Optional[list[Team]]<br ALIGN="LEFT"/>transcripts : Optional[list[Transcript]]<br ALIGN="LEFT"/>when : datetime<br ALIGN="LEFT"/>|offset_from_start(when: datetime.datetime): datetime.timedelta<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"yus.Interpretation" [color="black", fontcolor="black", label=<{Interpretation|confidence : Optional[float]<br ALIGN="LEFT"/>duration<br ALIGN="LEFT"/>group : TranscriptGroup \| None<br ALIGN="LEFT"/>start<br ALIGN="LEFT"/>transcript<br ALIGN="LEFT"/>words : list[Word]<br ALIGN="LEFT"/>|add_word(text: str): Word<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"yus.Team" [color="black", fontcolor="black", label=<{Team|names : Optional[list[str]]<br ALIGN="LEFT"/>players : Optional[dict[str, list[str]]]<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"yus.Term" [color="black", fontcolor="black", label=<{Term|phrase : Optional[str]<br ALIGN="LEFT"/>weight : Optional[float]<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"yus.Transcript" [color="black", fontcolor="black", label=<{Transcript|commentator : str \| None<br ALIGN="LEFT"/>game : Game \| None<br ALIGN="LEFT"/>groups : list[TranscriptGroup]<br ALIGN="LEFT"/>start<br ALIGN="LEFT"/>words<br ALIGN="LEFT"/>|add_group(): TranscriptGroup<br ALIGN="LEFT"/>duration(): datetime.timedelta<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"yus.TranscriptGroup" [color="black", fontcolor="black", label=<{TranscriptGroup|duration<br ALIGN="LEFT"/>interpretations : list[Interpretation]<br ALIGN="LEFT"/>start<br ALIGN="LEFT"/>transcript<br ALIGN="LEFT"/>words<br ALIGN="LEFT"/>|add_interpretation(confidence: float): Interpretation<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"yus.Word" [color="black", fontcolor="black", label=<{Word|confidence : float<br ALIGN="LEFT"/>duration : timedelta<br ALIGN="LEFT"/>start : datetime<br ALIGN="LEFT"/>text : str<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"yus.Transcript" -> "yus.TranscriptGroup" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="transcript", style="solid"];
+}

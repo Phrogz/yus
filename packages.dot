@@ -1,0 +1,7 @@
+digraph "packages" {
+rankdir=BT
+charset="utf-8"
+"yus" [color="black", label=<yus>, shape="box", style="solid"];
+"yus.util" [color="black", label=<yus.util>, shape="box", style="solid"];
+"yus.util" -> "yus" [arrowhead="open", arrowtail="none"];
+}
