@@ -12,7 +12,7 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
   * Defense: who prevented a completion; if they caught the disc or just prevented the catch.
   * Subbing: each time someone subs off or onto the field, who they are.
   * Infractions: fouls and violations (e.g. "stall called"), who called it, who it was called on, whether it was contested.
-  
+
   Please try to be consistent in how you reference a player.
     If you don't know their name, you can reference their clothing, e.g. "red shorts", "visor", "rally cap", "87".
     If you later learn their name, I _think_ it will be better if you either stay consistent with the "nickname", or
@@ -30,7 +30,7 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
 
 * **Event Extraction**: What's the best way to convert a transcript into a series of structured events?
   Given some ground-truth transcriptions, see if you can come up with algorithms or LLMs that produce the desired output!
-  
+
   Note that the commentary is fast and varied:
 
   _"Tristan picks it up flick swing to Joe he dumps to Emily swings to Matt cross field to Tristan hammer_
@@ -42,7 +42,7 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
   unify "Pikachu" and "Matt" and "Whitlock", resolve cases where one commentator did not see who caught it but the other
   did, merging two events that describe the same action, etc.
 
-  * Test event streams and their expected unified output will be in the `tests/data` directory.  
+  * Test event streams and their expected unified output will be in the `tests/data` directory.
     _(Currently there's only one test event stream, where unification simply assigns the right names to some players.)_
 
 * **Stats**: Given a stream of events with timestamps, player and team names, throw types, outcomes, brainstorm on what
@@ -53,14 +53,14 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
 
 ## Getting Started with the Code
 
-YUS is written in Python. To contribute you need some version of Python, `git`, `uv`, and (strongly suggested) VS Code:
+YUS is written in Python. To contribute you need some version of Python, `git`, `uv`, and (strongly suggested) VS Code or Cursor:
 
 * [git][1]
-* [vscode][2]
+* [VS Code][2] or [Cursor][7]
 * [uv][3] (for Windows, use Linux standalone installer in WSL2)
 
-The easiest way to start is to fork the repository on GitHub...  
-<https://github.com/Phrogz/yus/fork>  
+The easiest way to start is to fork the repository on GitHub...
+<https://github.com/Phrogz/yus/fork>
 ...and then clone it and play around:
 
 ```bash
@@ -95,3 +95,4 @@ and then [create a local Pull Request][6] to get your work reviewed and merged i
 [4]: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request-from-a-fork
 [5]: https://github.com/Phrogz/yus/issues/1
 [6]: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request
+[7]: https://cursor.com/
