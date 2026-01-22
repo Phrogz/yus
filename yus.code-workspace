@@ -20,6 +20,7 @@
 		]
 	},
 	"settings": {
+		"python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
 		"editor.formatOnSave": true,
 		"explorer.excludeGitIgnore": true,
 		"notebook.defaultFormatter": "charliermarsh.ruff",
@@ -31,7 +32,7 @@
 			},
 			"editor.defaultFormatter": "charliermarsh.ruff",
 			"editor.rulers": [
-				140
+				180
 			]
 		},
 		"python.analysis.typeCheckingMode": "strict",

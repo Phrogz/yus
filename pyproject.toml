@@ -13,9 +13,16 @@ dependencies = [
     "dash>=2.18.2",
     "pytest>=8.3.4",
     "google-cloud-speech>=2.30.0",
+    "faster-whisper>=1.1.0",
     "pandas>=2.2.3",
 ]
 
+[project.scripts]
+yus-transcribe = "yus.processing.transcription.transcribe:main"
+
+[tool.uv]
+package = true
+
 [tool.ruff]
-line-length = 140
+line-length = 180
 select = ["E", "F", "W", "C90"]

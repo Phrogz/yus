@@ -20,3 +20,5 @@ terms.extend(
         wall glass net netting off_the_wall off_the_net
     """.split()
 )
+
+mondegreens: dict[str, list[str]] = dict(ultimate.mondegreens)

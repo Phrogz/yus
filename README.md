@@ -103,3 +103,47 @@ or likely that there will be confusion, causing two people to cover the same pla
 
 * [Architecture](docs/architecture.md) - get a little more technical with the vision.
 * [Contributing](docs/CONTRIBUTING.md) - learn how you (yes, you!) can help.
+
+## Running YUS
+
+### Initial Setup
+
+#### macOS
+
+1. Install `uv` (Python package manager):
+
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+1. Install `ffmpeg` with Homebrew:
+
+  ```bash
+  brew install ffmpeg
+  ```
+
+1. Install Python virtual environment with all necessary dependencies:
+
+  ```bash
+  uv sync
+  ```
+
+### Running
+
+After the environment is set up, use the installed script:
+
+```bash
+yus-transcribe /path/to/audio.wav
+```
+
+Optional flags:
+
+```bash
+yus-transcribe /path/to/audio.wav \
+  --sport ultimate/indoor \
+  --terms-file /path/to/terms.txt \
+  --prompt "custom phrase" \
+  --text
+```
+
+By default, the transcript is written next to the audio file as `*.transcript.json` (use `--text` for `*.transcript.txt`).

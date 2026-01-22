@@ -1,0 +1,22 @@
+{
+  "names": ["Category 5", "Cat 5", "dark", "black"],
+  "players": {
+    "Jennifer Dasenbrock": [],
+    "Molly Lanning": [],
+    "Adam Federbusch": {
+      "nicknames": ["Busch"],
+      "mondegreens": ["feather brush", "feather bush", "federbush", "bush", "Featherbush", "Fetterbusch"]
+    },
+    "Christopher Baines": {"nicknames": ["hat"]},
+    "Collin Ruprecht": {
+      "mondegreen": ["naked"]
+    },
+    "Jacob Gernert": [],
+    "Jerry Swider": [],
+    "Nathan Speer": [],
+    "Sammy Allen": [],
+    "Thomas McPherson": [],
+    "Zach Ehler": ["Turtle"],
+    "George Abuhamad": []
+  }
+}

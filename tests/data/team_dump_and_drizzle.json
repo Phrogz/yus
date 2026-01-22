@@ -1,0 +1,21 @@
+{
+  "names": ["Dump & Drizzle", "white", "light"],
+  "players": {
+    "Matt Whitlock": ["Pikachu"],
+    "Kaia Mann": {
+      "mondegreens": ["takaya"]
+    },
+    "Emily Kraus": [],
+    "Alexis Rosas": [],
+    "Ari Weissman": [],
+    "Ben Kishter": {
+      "mondegreens": ["close crop", "short crop", "short crown"]
+    },
+    "Drew Rasmussen": [],
+    "Joe Oaks": [],
+    "Serayan Knappe-Butler": {"mondegreens": ["the kid"]},
+    "Stephen Butler": {"mondegreens": ["Steven Butler"]},
+    "Tristan Weber": []
+  },
+  "replacements": {}
+}

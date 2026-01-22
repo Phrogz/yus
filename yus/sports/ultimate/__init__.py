@@ -101,4 +101,9 @@ terms.extend(
     """.split()
 )
 
-__all__ = ["terms", "UltimateEvent", "Throw", "Defense", "ThrowType", "ThrowDirection", "SubType"]
+# Common ASR mis-hearings mapped back to canonical terms.
+mondegreens: dict[str, list[str]] = {
+    "scoober": ["scooper"],
+}
+
+__all__ = ["terms", "mondegreens", "UltimateEvent", "Throw", "Defense", "ThrowType", "ThrowDirection", "SubType"]

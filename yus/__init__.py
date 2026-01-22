@@ -18,6 +18,16 @@ class Term(pydantic.BaseModel):
     weight: float = pydantic.Field(1.0, description="The likelihood of utterance, from 0.0 (least likely) to  1.0 (most likely).")
 
 
+class PlayerInfo(pydantic.BaseModel):
+    """
+    Detailed information about a player, including nicknames and mondegreens.
+    (A mondegreen is a mishearing or misinterpretation of a phrase.)
+    """
+
+    nicknames: list[str] = pydantic.Field(default_factory=list, description="Alternate names for the player (e.g. nicknames, jersey numbers).")
+    mondegreens: list[str] = pydantic.Field(default_factory=list, description="Words or phrases to replace with the official name (e.g. 'feather brush' -> 'Federbusch').")
+
+
 class Team(pydantic.BaseModel):
     """
     Represents a team in a specific game.
@@ -25,8 +35,9 @@ class Team(pydantic.BaseModel):
     """
 
     names: list[str] = pydantic.Field([], description="Names for the team, e.g. 'Flight Club' or 'white'.")
-    players: dict[str, list[str]] = pydantic.Field(
-        {}, description="Formal name of each player on the team, mapping to a list of alternate names (e.g. nicknames, jersey numbers)."
+    players: dict[str, list[str] | PlayerInfo] = pydantic.Field(
+        {},
+        description="Player names mapping to either a list of nicknames, or a PlayerInfo dict with 'nicknames' and 'mondegreens' fields.",
     )
 
 
@@ -37,9 +48,9 @@ class Game(pydantic.BaseModel):
 
     sport: str = pydantic.Field(..., description="The sport played in the game.")
     when: datetime.datetime = pydantic.Field(..., description="The date/time when the game started.")
-    teams: list[Team] = pydantic.Field(default_factory=list, description="The teams playing in the game.")
-    transcripts: list[Transcript] = pydantic.Field(default_factory=list, description="The play-by-play transcript(s) for this game.")
-    event_streams: list[EventStream] = pydantic.Field(default_factory=list, description="The event stream(s) for this game.")
+    teams: list[Team] = pydantic.Field(default_factory=lambda: list[Team](), description="The teams playing in the game.")
+    transcripts: list[Transcript] = pydantic.Field(default_factory=lambda: list[Transcript](), description="The play-by-play transcript(s) for this game.")
+    event_streams: list[EventStream] = pydantic.Field(default_factory=lambda: list[EventStream](), description="The event stream(s) for this game.")
     official_stream: EventStream | None = pydantic.Field(default=None, description="The official, unified event stream for this game.")
 
     def offset_from_start(self, when: datetime.datetime) -> datetime.timedelta:
