@@ -3023,6 +3023,7 @@ def build_unified_stream(raw: yus.EventStream) -> yus.EventStream:
         "yellow sleeve": {"yellow", "yellow border", "yellow fringe", "yellow stripe", "yellow stripe yellow fringe"},
         "leg stripe": {"leg stripes", "pants stripe", "purple leg stripe"},
         "Zach Ehler": {"turtle"},
+        "Collin Ruprecht": {"naked"},
         "George Abuhamad": {"george"},
     }
     reverse_map = {v: player for player, player_aliases in aliases.items() for v in player_aliases}
