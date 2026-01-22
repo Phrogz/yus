@@ -96,10 +96,9 @@ terms.extend(
 terms.extend(
     yus.Term(phrase=s.replace("_", " "), weight=0.2)
     for s in """
-        checks_it_in checks_in checks_it
+        checks_it_in checked_in checks_it
         thumber chicken_wing pizza
     """.split()
 )
-
 
 __all__ = ["terms", "UltimateEvent", "Throw", "Defense", "ThrowType", "ThrowDirection", "SubType"]
