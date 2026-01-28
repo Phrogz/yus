@@ -73,7 +73,7 @@ class Interpretation(pydantic.BaseModel):
 
     words: list[Word] = []
     confidence: float = pydantic.Field(default=0.0, description="The confidence of this interpretation.")
-    group: TranscriptGroup | None = pydantic.Field(default=None, description="The group this interpretation belongs to.")
+    group: TranscriptGroup | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent TranscriptGroup (excluded from serialization).")
 
     @property
     def transcript(self) -> str:
@@ -102,7 +102,7 @@ class Interpretation(pydantic.BaseModel):
     def __str__(self) -> str:
         a = self.start
         b = self.start + self.duration
-        if self.group:
+        if self.group and self.group.transcript:
             a -= self.group.transcript.start
             b -= self.group.transcript.start
         return f"({self.confidence * 100:.0f}% {a}–{b}) {self.transcript}"
@@ -112,7 +112,12 @@ class TranscriptGroup(pydantic.BaseModel):
     """A section of words that definitely go together."""
 
     interpretations: list[Interpretation] = []
-    transcript: Transcript
+    transcript: Transcript | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Transcript (excluded from serialization).")
+
+    def model_post_init(self, __context: object) -> None:
+        """Restore back-references after deserialization."""
+        for interp in self.interpretations:
+            interp.group = self
 
     @property
     def start(self) -> datetime.datetime:
@@ -140,9 +145,16 @@ class TranscriptGroup(pydantic.BaseModel):
 class Transcript(pydantic.BaseModel):
     """Transcript of a game."""
 
-    game: Game | None = pydantic.Field(default=None, description="The game being described.")
+    game: Game | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Game (excluded from serialization).")
     commentator: str | None = pydantic.Field(default=None, description="The name of the person providing this play-by-play.")
     groups: list[TranscriptGroup] = []
+
+    def model_post_init(self, __context: object) -> None:
+        """Restore back-references after deserialization."""
+        for group in self.groups:
+            group.transcript = self
+            for interp in group.interpretations:
+                interp.group = group
 
     @property
     def words(self) -> list[Word]:

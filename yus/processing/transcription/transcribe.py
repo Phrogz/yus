@@ -157,22 +157,12 @@ def write_transcript_text(transcript: yus.Transcript, output_path: pathlib.Path)
 
 
 def write_transcript_json(transcript: yus.Transcript, output_path: pathlib.Path) -> None:
-    # Exclude circular back-references:
+    # Back-references are excluded via field config (exclude=True) on:
     # - Interpretation.group (back-reference to TranscriptGroup)
     # - TranscriptGroup.transcript (back-reference to Transcript)
-    exclude_spec: dict[str, Any] = {
-        "groups": {
-            "__all__": {
-                "transcript": True,  # Exclude TranscriptGroup.transcript
-                "interpretations": {
-                    "__all__": {
-                        "group": True,  # Exclude Interpretation.group
-                    }
-                },
-            }
-        }
-    }
-    output_path.write_text(json.dumps(transcript.model_dump(mode="json", exclude=exclude_spec), indent=2, sort_keys=True) + "\n")
+    # - Transcript.game (back-reference to Game)
+    # These are restored on load via model_post_init hooks.
+    output_path.write_text(json.dumps(transcript.model_dump(mode="json"), indent=2, sort_keys=True) + "\n")
 
 
 def load_teams_from_files(team_files: list[pathlib.Path]) -> list[yus.Team]:
