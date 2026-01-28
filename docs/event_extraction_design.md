@@ -71,12 +71,12 @@ The transcript JSON contains:
 
 From [yus/sports/ultimate/__init__.py](../yus/sports/ultimate/__init__.py) and [yus/sports/ultimate/indoor.py](../yus/sports/ultimate/indoor.py):
 
-| Event Type    | Key Fields                                                                 |
-| ------------- | -------------------------------------------------------------------------- |
-| `Throw`       | `when`, `team`, `player`, `type`, `direction`, `receiver`, `completed`, `scored`, `hit_wall`, `hit_net` |
-| `Defense`     | `when`, `team`, `player`, `intercepted`                                    |
-| `Substitution`| `when`, `team`, `player`, `sub_type` (SUB_ON/SUB_OFF)                      |
-| `Infraction`  | `when`, `team`, `player` (details TBD)                                     |
+| Event Type    | Key Fields                                                                          |
+| ------------- | ----------------------------------------------------------------------------------- |
+| `Throw`       | when, team, player, type, direction, receiver, completed, scored, hit_wall, hit_net |
+| `Defense`     | when, team, player, intercepted                                                     |
+| `Substitution`| when, team, player, sub_type (SUB_ON/SUB_OFF)                                       |
+| `Infraction`  | when, team, player (details TBD)                                                    |
 
 ---
 

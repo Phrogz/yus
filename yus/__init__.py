@@ -188,8 +188,8 @@ class Event(pydantic.BaseModel):
 
 
 class EventStream(pydantic.BaseModel):
-    game: Game | None = pydantic.Field(default=None, description="The game being described.")
-    transcript: Transcript | None = pydantic.Field(default=None, description="The play-by-play transcript these events are derived from.")
+    game: Game | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Game (excluded from serialization).")
+    transcript: Transcript | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the source Transcript (excluded from serialization).")
     events: list[Event] = []
 
     def add(self, evt: Event) -> EventStream:
