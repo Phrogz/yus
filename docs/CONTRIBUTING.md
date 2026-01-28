@@ -18,12 +18,11 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
     If you later learn their name, I _think_ it will be better if you either stay consistent with the "nickname", or
     say the association in your recording it, e.g. "Oh, red shorts is Kaia".
 
-* **Transcription**: What's the best way to convert audio play-by-play to text? We do not care about punctuation or grammar,
-  but we do care about accuracy in player names, actions specific to the sport, and timestamps. Help investigate different
-  ASR model providers, feeding in sport terms and player names? Or train a custom model that works well for a single sport!
-  * Test play-by-play video and audio files are available in [this shared Google Drive][0].
-  * Presently the output from Google Speech (with a particular model and adaptation) for these will be added there.
-  * Ground truth expected transcription results are (slowly) being added to `tests/data` directory.
+* **Transcription**: There's an implementation of a transcription pipeline using OpenAI's Whisper model.
+  It's not fast, but it works reasonably well on the sample commentary we have.
+  Eventually, we probably want to train custom models that are fine-tuned on commentary for specific sports.
+
+  Sample audio and video files with commentary are available in [this Google Drive folder][0].
 
 * **User Experience**: In a web app on mobile, how can we help commentators know player names, or later associate their
   description with specific players?
@@ -80,10 +79,10 @@ code yus.code-workspace
 Once you've done work that you feel is good (or ready for discussion), push your work to GitHub and
 [create a Pull Request from your fork][4].
 
-### No, Fork You!
+### No, Fork You (!)
 
 Not interested in forking? Want to be a contributor on the official repo? That's fine!
-Send Gavin a message (303.408.0101) or a email (gavin@phrogz.net) with your GitHub username, and he'll
+Send Gavin a message (303.408.0101) or a email (mailto:gavin@phrogz.net) with your GitHub username, and he'll
 add you to the contributor list so you can help maintain the project.
 The `main` branch is locked down, so you'll need to create your own branch(es) in git for your work
 and then [create a local Pull Request][6] to get your work reviewed and merged in.
