@@ -68,8 +68,9 @@ class Infraction(UltimateEvent):
     """
     A foul or violation.
     """
-
-    pass
+    called_on_plyr: str | None = pydantic.Field(None, description='Name of the player that called the infraction.')
+    called_on_team: str | None = pydantic.Field(None, description='Name of the team that the infraction was called on.')
+    contested: bool = pydantic.Field(False, description="True if the violation was contested.")
 
 
 terms: list[yus.Term] = []
