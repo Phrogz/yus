@@ -81,7 +81,7 @@ A team JSON file describes one team and its players. Here's the basic structure:
     "Full Name": ["Nickname"],
     "Another Player": {
       "nicknames": ["Nick"],
-      "mondegreen": ["common", "mishearing"]
+      "mondegreens": ["common", "mishearing"]
     }
   }
 }
@@ -113,7 +113,7 @@ A team JSON file describes one team and its players. Here's the basic structure:
 1. **Simple array** - Just nicknames: `["Nickname1", "Nickname2"]`
 2. **PlayerInfo object** with:
    - `nicknames` (array) - Alternative names you might use during commentary
-   - `mondegreen` (array) - Common ASR mistakes (mondegreens) that should be corrected to the official name
+   - `mondegreens` (array) - Common ASR mistakes (mondegreens) that should be corrected to the official name
 
 **Empty arrays** (`[]`) are fine for players with no nicknames or mondegreens - it still helps the ASR know that name exists.
 
@@ -123,7 +123,7 @@ A team JSON file describes one team and its players. Here's the basic structure:
 2. **Add common nicknames** - How do you actually refer to players during a game?
 3. **Test transcription** - Run `yus-transcribe` on a sample
 4. **Note mondegreens** - Review the transcript for mangled names
-5. **Add corrections** - Update the `mondegreen` fields for any persistent mistakes
+5. **Add corrections** - Update the `mondegreens` fields for any persistent mistakes
 6. **Re-run transcription** - Your transcript should now be cleaner
 
 ### Tips for Better Transcription

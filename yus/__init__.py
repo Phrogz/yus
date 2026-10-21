@@ -24,6 +24,8 @@ class PlayerInfo(pydantic.BaseModel):
     (A mondegreen is a mishearing or misinterpretation of a phrase.)
     """
 
+    model_config = pydantic.ConfigDict(extra="forbid")  # a misspelled key (e.g. "mondegreen") must not be silently dropped
+
     nicknames: list[str] = pydantic.Field(default_factory=list, description="Alternate names for the player (e.g. nicknames, jersey numbers).")
     mondegreens: list[str] = pydantic.Field(default_factory=list, description="Words or phrases to replace with the official name (e.g. 'feather brush' -> 'Federbusch').")
 
@@ -33,6 +35,8 @@ class Team(pydantic.BaseModel):
     Represents a team in a specific game.
     A single organized team may have multiple Team instances to handle different sets of players or substitutions.
     """
+
+    model_config = pydantic.ConfigDict(extra="forbid")
 
     names: list[str] = pydantic.Field([], description="Names for the team, e.g. 'Flight Club' or 'white'.")
     players: dict[str, list[str] | PlayerInfo] = pydantic.Field(
@@ -176,9 +180,15 @@ class Transcript(pydantic.BaseModel):
         return "\n\n".join(str(group) for group in self.groups)
 
 
+_EVENT_TYPES: dict[str, type[Event]] = {}
+
+
 class Event(pydantic.BaseModel):
     """
     Base class for all events, with the minimal common fields.
+
+    Every subclass is registered under its type key (e.g. "indoor.Throw"), which EventStream writes to JSON as
+    "__type__" so that events load back as the right class.
 
     Args:
         when (datetime.datetime): The date/time when the event occurred.
@@ -186,11 +196,56 @@ class Event(pydantic.BaseModel):
 
     when: datetime.datetime
 
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        _EVENT_TYPES[cls.type_key()] = cls
+
+    @classmethod
+    def type_key(cls) -> str:
+        """The "__type__" tag for this class: last module name plus class name, e.g. "indoor.Throw"."""
+        return f"{cls.__module__.rsplit('.', 1)[-1]}.{cls.__qualname__}"
+
+    @staticmethod
+    def from_tagged(data: dict[str, object]) -> Event:
+        """Build the event subclass named by data["__type__"] (the module defining it must have been imported)."""
+        fields = dict(data)
+        key = fields.pop("__type__", None)
+        if key is None:
+            return Event.model_validate(fields)
+        if key not in _EVENT_TYPES:
+            raise ValueError(f"Unknown event type {key!r}; import the module that defines it. Known types: {sorted(_EVENT_TYPES)}")
+        return _EVENT_TYPES[str(key)].model_validate(fields)
+
+
+_EVENT_TYPES[Event.type_key()] = Event
+
 
 class EventStream(pydantic.BaseModel):
     game: Game | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Game (excluded from serialization).")
     transcript: Transcript | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the source Transcript (excluded from serialization).")
     events: list[Event] = []
+
+    @pydantic.field_validator("events", mode="before")
+    @classmethod
+    def _load_event_types(cls, value: object) -> object:
+        """Rebuild serialized events as the subclass named by their "__type__" tag."""
+        if not isinstance(value, list):
+            return value
+        return [Event.from_tagged(evt) if isinstance(evt, dict) else evt for evt in value]  # type: ignore[arg-type]
+
+    @pydantic.field_serializer("events")
+    def _dump_event_types(self, events: list[Event], info: pydantic.FieldSerializationInfo) -> list[dict[str, object]]:
+        """Serialize each event with all of its subclass's fields, plus its "__type__" tag."""
+        options = {
+            "mode": info.mode,
+            "by_alias": info.by_alias,
+            "exclude_unset": info.exclude_unset,
+            "exclude_defaults": info.exclude_defaults,
+            "exclude_none": info.exclude_none,
+            "round_trip": info.round_trip,
+        }
+        return [{**evt.model_dump(**options), "__type__": evt.type_key()} for evt in events]
 
     def add(self, evt: Event) -> EventStream:
         self.events.append(evt)

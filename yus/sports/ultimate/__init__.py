@@ -106,4 +106,4 @@ mondegreens: dict[str, list[str]] = {
     "scoober": ["scooper"],
 }
 
-__all__ = ["terms", "mondegreens", "UltimateEvent", "Throw", "Defense", "ThrowType", "ThrowDirection", "SubType"]
+__all__ = ["terms", "mondegreens", "UltimateEvent", "Throw", "Defense", "Substitution", "Infraction", "ThrowType", "ThrowDirection", "SubType"]
