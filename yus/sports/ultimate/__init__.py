@@ -103,7 +103,10 @@ terms.extend(
 
 # Common ASR mis-hearings mapped back to canonical terms.
 mondegreens: dict[str, list[str]] = {
-    "scoober": ["scooper"],
+    "scoober": ["scooper", "scuba"],
+    "huck": ["hawk"],
+    "end zone": ["endzone"],
+    "deed": ["d"],
 }
 
 __all__ = ["terms", "mondegreens", "UltimateEvent", "Throw", "Defense", "Substitution", "Infraction", "ThrowType", "ThrowDirection", "SubType"]

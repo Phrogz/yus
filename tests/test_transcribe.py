@@ -86,6 +86,15 @@ def test_multi_word_mondegreen_becomes_one_word(replacements: tr.Replacements) -
         ([" Feather", " bush"], ["Adam Federbusch"]),  # longest match first: not "Feather" + replaced "bush"
         ([" bush"], ["Adam Federbusch"]),
         ([" the", " kids"], ["the", "kids"]),
+        # mishearings learned from the 2025-01-14 20:30 game's audio
+        ([" Flick", " to", " Kaya."], ["Flick", "to", "Kaia Mann."]),
+        ([" Steven", " picks"], ["Stephen Butler", "picks"]),
+        ([" Kidd", " flicks"], ["Serayan Knappe-Butler", "flicks"]),
+        ([" Fetterbush"], ["Adam Federbusch"]),
+        ([" Scuba", " to"], ["scoober", "to"]),
+        ([" Flick", " -hawk"], ["Flick", "-huck"]),
+        ([" the", " endzone"], ["the", "end zone"]),
+        ([" D", " by"], ["deed", "by"]),
     ],
 )
 def test_mondegreen_phrases(replacements: tr.Replacements, spoken: list[str], expected: list[str]) -> None:
@@ -99,7 +108,7 @@ def test_mondegreen_phrases(replacements: tr.Replacements, spoken: list[str], ex
     [
         ([" the.", " Kid"], ["the.", "Kid"]),
         ([" close,", " crop"], ["close,", "crop"]),
-        ([" Steven;", " Butler"], ["Steven;", "Butler"]),
+        ([" Steven;", " Butler"], ["Stephen Butler;", "Butler"]),  # not "steven butler", but "steven" alone still matches
         ([" feather?", " bush"], ["feather?", "Adam Federbusch"]),  # not "feather bush", but "bush" alone still matches
         ([" close…", " crop"], ["close…", "crop"]),
         ([" close—", " crop"], ["close—", "crop"]),
