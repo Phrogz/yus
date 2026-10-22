@@ -1,9 +1,12 @@
 import datetime as dt
 import json
+import math
 import os
 import pathlib
 import threading
 import time
+import unicodedata
+from collections.abc import Callable
 
 import pandas as pd
 import pytest
@@ -62,6 +65,19 @@ def other_commentator(transcript: yus.Transcript, seconds: float, drop: int) -> 
 
 def arrival(group: yus.TranscriptGroup) -> dt.datetime:
     return max(word.start + word.duration for word in group.words)
+
+
+def feed_in_turn(session: GameSession, streams: dict[str, list[yus.TranscriptGroup]], lag: dict[str, float] | None = None) -> list[GameSnapshot]:
+    """Feed each commentator's groups in the order they arrive, each `lag` seconds late, advancing them to the group's end; a
+    snapshot after each."""
+    late = {name: dt.timedelta(seconds=(lag or {}).get(name, 0.0)) for name in streams}
+    feed = sorted(((arrival(g) + late[name], k, name, g) for k, (name, groups) in enumerate(streams.items()) for g in groups), key=lambda item: item[:2])
+    snapshots = []
+    for _, _, name, group in feed:
+        session.add_groups(name, [group])
+        session.advance(arrival(group), name)
+        snapshots.append(session.snapshot())
+    return snapshots
 
 
 def assert_settled_never_change(snapshots: list[GameSnapshot], final: GameSnapshot) -> None:
@@ -179,12 +195,7 @@ def test_two_commentators_are_merged(game: yus.Game, transcript: yus.Transcript,
     session = GameSession(game, descriptions)
     session.add_commentator("A")
     session.add_commentator("B", focus_team="light")
-    feed = sorted([(arrival(g), 0, g) for g in transcript.groups] + [(arrival(g), 1, g) for g in other.groups], key=lambda item: item[:2])
-    snapshots = []
-    for when, k, group in feed:
-        session.add_groups("AB"[k], [group])
-        session.advance(when, "AB"[k])
-        snapshots.append(session.snapshot())
+    snapshots = feed_in_turn(session, {"A": transcript.groups, "B": other.groups})
     session.finish()
     final = session.snapshot()
 
@@ -286,18 +297,29 @@ def test_version_increases_on_every_change(game: yus.Game, transcript: yus.Trans
     assert session.snapshot().settled_count == len(session.snapshot().official.events)
     session.describe("white", ["glasses"], label="glasses")
     changed()
-    session.finish()
-    changed()
-    session.finish()
-    changed(False)
-    with pytest.raises(RuntimeError):
-        session.add_groups("A", transcript.groups[5:6])
     with pytest.raises(ValueError):
         session.add_commentator("A")
     with pytest.raises(ValueError):
         session.set_pending_text("nobody", "")
     with pytest.raises(ValueError):
+        session.describe("white", ["glasses"], label="glasses", commentator="a typo")
+    with pytest.raises(ValueError):
         GameSession(game).add_commentator("C", focus_team="purple")
+    with pytest.raises(TypeError):
+        session.set_pending_text("A", None)  # type: ignore[arg-type]
+    changed(False)
+    assert session.snapshot().commentators[0].pending_text == "flick"
+    session.finish()
+    changed()
+    session.finish()
+    changed(False)
+    session.advance(arrival(transcript.groups[4]) + dt.timedelta(seconds=60))
+    changed(False)
+    for refused in (lambda: session.add_groups("A", transcript.groups[5:6]), lambda: session.add_commentator("B"), lambda: session.set_pending_text("A", "x")):
+        with pytest.raises(RuntimeError):
+            refused()
+    session.describe("white", ["specs"], label="glasses")  # names can still be fixed
+    changed()
 
 
 def test_snapshot_speed(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
@@ -348,28 +370,42 @@ def test_replay_of_a_saved_whisper_transcript(game: yus.Game, descriptions: Game
     assert snap.official.events == batch.events and sum(snap.score.values()) >= 23
 
 
-def test_threads_feed_and_read_concurrently(game: yus.Game, transcript: yus.Transcript):
+def guarded(errors: list[BaseException], work: Callable[[], None]) -> threading.Thread:
+    """A thread that runs `work`, adding any exception to `errors`."""
+
+    def run() -> None:
+        try:
+            work()
+        except BaseException as error:  # pragma: no cover - reported by the test
+            errors.append(error)
+
+    return threading.Thread(target=run)
+
+
+def test_threads_feed_and_read_concurrently(game: yus.Game, transcript: yus.Transcript, tmp_path: pathlib.Path):
     other = other_commentator(transcript, 3.0, drop=5)
-    session = GameSession(game)
+    session = GameSession(game, directory=tmp_path)
     session.add_commentator("A")
     session.add_commentator("B")
     done = threading.Event()
     errors: list[BaseException] = []
 
     def feed(name: str, groups: list[yus.TranscriptGroup]) -> None:
-        try:
-            for group in groups:
-                session.add_groups(name, [group])
-        except BaseException as error:  # pragma: no cover - reported below
-            errors.append(error)
+        for group in groups:
+            session.add_groups(name, [group])
 
     def read() -> None:
         while not done.is_set():
             snap = session.snapshot()
             assert snap.settled_count <= len(snap.official.events)
 
-    threads = [threading.Thread(target=feed, args=("A", transcript.groups)), threading.Thread(target=feed, args=("B", other.groups))]
-    reader = threading.Thread(target=read)
+    def describe_and_save() -> None:
+        for i in range(10):
+            session.describe("white", ["glasses"], label=f"glasses {i}")
+            session.save()
+
+    threads = [guarded(errors, lambda: feed("A", transcript.groups)), guarded(errors, lambda: feed("B", other.groups)), guarded(errors, describe_and_save)]
+    reader = guarded(errors, read)
     for thread in [*threads, reader]:
         thread.start()
     for thread in threads:
@@ -381,6 +417,112 @@ def test_threads_feed_and_read_concurrently(game: yus.Game, transcript: yus.Tran
     snap = session.snapshot()
     assert snap.raw["A"].events == extract_events(transcript, game.teams, timeout=6.0).events
     assert snap.raw["B"].events == extract_events(other, game.teams, timeout=6.0).events
+    session.save()
+    assert_same_snapshot(GameSession.load(tmp_path).snapshot(), snap)
+
+
+def test_a_lagging_commentator_never_unsettles_events(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    """B's transcript arrives 90 s late (a busy GPU, say). LiveMerger alone allows 20 s."""
+    other = other_commentator(transcript, 5.0, drop=8)
+    session = GameSession(game, descriptions)
+    session.add_commentator("A")
+    session.add_commentator("B", focus_team="light")
+    snapshots = feed_in_turn(session, {"A": transcript.groups, "B": other.groups}, lag={"B": 90.0})
+    session.finish()
+    final = session.snapshot()
+    assert_settled_never_change(snapshots, final)
+    assert len(final.official.events) == 200 and max(len(s.official.events) - s.settled_count for s in snapshots) < 45
+
+
+def test_merged_events_settle_only_as_far_as_the_slowest_commentator(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    other = other_commentator(transcript, 5.0, drop=8)  # B's clock is 5 s ahead
+    session = GameSession(game, descriptions)
+    session.add_commentator("A")
+    session.add_commentator("B", focus_team="light")
+    session.add_groups("A", transcript.groups[:30])
+    session.advance(arrival(transcript.groups[29]), "A")
+    assert session.snapshot().settled_count == 0  # nothing is known of B, who may yet report the start of the game
+
+    a = transcript.groups[30:160]
+    b = [group for group in other.groups if group.start < transcript.groups[120].start + dt.timedelta(seconds=5)]
+    feed_in_turn(session, {"A": a, "B": b})  # then B is silent, and not advanced
+    stalled = session.snapshot()
+    assert 0 < stalled.settled_count and stalled.official.events[stalled.settled_count - 1].when < b[-1].start - dt.timedelta(seconds=5)
+    session.advance(arrival(a[-1]) + dt.timedelta(seconds=5), "B")  # B's transcript is complete up to A's last word: B said nothing
+    resumed = session.snapshot()
+    assert resumed.settled_count > stalled.settled_count + 20
+    assert resumed.official.events[: stalled.settled_count] == stalled.official.events[: stalled.settled_count]
+
+
+def test_commentators_named_alike_but_for_case_get_their_own_files(game: yus.Game, transcript: yus.Transcript, tmp_path: pathlib.Path):
+    session = GameSession(game, directory=tmp_path)
+    names = ["Gavin", "gavin", "G\u00e1vin", "Ga\u0301vin"]  # the last two differ only in Unicode normalization
+    for i, name in enumerate(names, 1):
+        session.add_commentator(name)
+        session.add_groups(name, transcript.groups[: 10 * i])
+    session.save()
+    files = [unicodedata.normalize("NFC", path.name).casefold() for path in (tmp_path / "transcripts").iterdir()]
+    assert len(set(files)) == len(files) == 4
+    loaded = GameSession.load(tmp_path)
+    assert loaded.commentators == names and [c.groups for c in loaded.snapshot().commentators] == [10, 20, 30, 40]
+
+
+def utc_minus_7(transcript: yus.Transcript) -> yus.Transcript:
+    """The transcript with its (naive, local) times given their UTC offset."""
+    for word in transcript.words:
+        word.start = word.start.replace(tzinfo=dt.timezone(dt.timedelta(hours=-7)))
+    return transcript
+
+
+def test_advance_takes_any_time_for_commentators_with_and_without_utc_offsets(game: yus.Game, monkeypatch: pytest.MonkeyPatch):
+    def session_of_two() -> GameSession:
+        session = GameSession(game)
+        for name, commentary in (("A", spoken((0, "picked up by pikachu for white"), (2, "flick to kaia"))), ("B", utc_minus_7(spoken((0, "kaia to tristan"))))):
+            session.add_commentator(name)
+            session.add_groups(name, commentary.groups)
+        return session
+
+    later = T0 + dt.timedelta(seconds=20)
+    for now in (later, later.replace(tzinfo=dt.timezone(dt.timedelta(hours=-7))), later.replace(tzinfo=dt.timezone(dt.timedelta(hours=-7))).astimezone(dt.UTC)):
+        session = session_of_two()
+        assert [len(session.snapshot().raw[name].events) for name in "AB"] == [1, 1] and [c.final_count for c in session.snapshot().commentators] == [0, 0]
+        session.advance(now)  # 17 s after the last word: both throws become final
+        assert [c.final_count for c in session.snapshot().commentators] == [1, 1]
+
+    session = session_of_two()
+    version = session.version
+
+    def broken(now: dt.datetime) -> None:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(session._commentators["B"].extractor, "advance", broken)
+    with pytest.raises(RuntimeError):
+        session.advance(later)
+    assert session.version > version and [c.final_count for c in session.snapshot().commentators] == [1, 0]  # A's throw became final before B failed
+
+
+def test_add_groups_refuses_times_unlike_the_commentators(game: yus.Game, tmp_path: pathlib.Path):
+    session = GameSession(game, directory=tmp_path)
+    session.add_commentator("A")
+    session.add_groups("A", spoken((0, "picked up by pikachu for white")).groups)
+    version = session.version
+    with pytest.raises(ValueError, match="naive"):
+        session.add_groups("A", [spoken((2, "flick to kaia")).groups[0], utc_minus_7(spoken((4, "backhand to tristan"))).groups[0]])
+    assert session.version == version and session.snapshot().commentators[0].groups == 1  # neither group was added
+    mixed = spoken((2, "flick to kaia"))
+    mixed.words[-1].start = mixed.words[-1].start.astimezone()
+    session.add_commentator("B")
+    with pytest.raises(ValueError):
+        session.add_groups("B", mixed.groups)
+    session.add_groups("B", utc_minus_7(spoken((0, "flick to kaia"))).groups)
+    session.save()
+    assert_same_snapshot(GameSession.load(tmp_path).snapshot(), session.snapshot())
+
+
+@pytest.mark.parametrize("speed, tick", [(-1.0, 1.0), (math.nan, 1.0), (1.0, 0.0)])
+def test_replay_refuses_a_bad_speed_or_tick(game: yus.Game, speed: float, tick: float):
+    with pytest.raises(ValueError):
+        replay(GameSession(game), spoken((0, "flick to kaia")), "A", speed=speed, tick=tick, clock=lambda: 0.0, sleep=lambda seconds: None)
 
 
 AUDIO = pathlib.Path(os.environ.get("YUS_DATA", pathlib.Path.home() / "Documents/Personal/yus-data")) / "drive/20250114T2030-0700.ogg"

@@ -15,12 +15,15 @@ from __future__ import annotations
 import copy
 import dataclasses
 import datetime as dt
+import itertools
 import json
+import math
 import os
 import pathlib
 import re
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
 from typing import Any
 
@@ -32,6 +35,7 @@ from yus.processing.event_unification import GameDescriptions, LiveMerger, Merge
 from yus.processing.stats import GameStats, compute_stats
 
 TIMEOUT = 6.0  # seconds without words after which an open throw becomes final (EventExtractor's timeout)
+SETTLE = 20.0  # seconds one commentator may lag another before settling waits longer (merge_streams's default `settle`)
 
 
 class CommentatorState(pydantic.BaseModel):
@@ -135,9 +139,26 @@ class _Commentator:
     extractor: EventExtractor
     pending_text: str = ""
     advanced: dt.datetime | None = None  # the latest time passed to advance()
+    aware: bool | None = None  # whether the transcript's times carry a UTC offset; None until the first word
+    spoke: tuple[dt.datetime, dt.datetime] | None = None  # start and end of the last group with words
     heard: int = 0  # associations of the extractor already recorded
     resolver: PlayerResolver | None = None  # what `resolved` was resolved with
     resolved: list[yus.Event] = dataclasses.field(default_factory=list)  # the final raw events, resolved
+
+    def awareness(self) -> bool | None:
+        """Whether this commentator's times carry a UTC offset: as their words, else as their last advance(); None if unknown."""
+        return self.aware if self.aware is not None or self.advanced is None else self.advanced.utcoffset() is not None
+
+    def progress(self, timeout: float | None) -> dt.datetime | None:
+        """The earliest time (theirs) at which an event still to come from this commentator can be; None while unknown (no words,
+        no advance). An event can start in the last group (a name ending it may be the subject of the next group), unless more
+        than `timeout` seconds without words followed it."""
+        if self.spoke is None:
+            return self.advanced
+        start, end = self.spoke
+        if self.advanced is not None and timeout is not None and (self.advanced - end).total_seconds() > timeout:
+            return self.advanced
+        return start
 
 
 @dataclasses.dataclass(eq=False)
@@ -190,7 +211,9 @@ class GameSession:
     Each commentator's groups go to their own EventExtractor (`timeout` seconds of silence finalize an open throw). Spoken
     identifications it finds ("red shorts is kaia") are recorded at once as descriptions for that commentator's stream.
     One commentator's resolved stream is the official stream; with more, a LiveMerger merges them, the first commentator added
-    being the clock reference. Add every commentator before feeding groups: one added later can unsettle settled events.
+    being the clock reference. Merged events settle only up to the slowest commentator's progress (their last group, or their
+    last advance() after a silence), so advance every commentator as their transcriber reports progress. Add every commentator
+    before feeding groups: one added later can unsettle settled events.
     """
 
     def __init__(self, game: yus.Game, descriptions: GameDescriptions | None = None, directory: pathlib.Path | str | None = None, *, timeout: float | None = TIMEOUT):
@@ -235,13 +258,14 @@ class GameSession:
     def add_commentator(self, name: str, focus_team: str | None = None) -> None:
         """Add a commentator; `focus_team` (any name of a team) if they follow one team, which then wins their merge conflicts."""
         with self._lock:
+            self._check_open()
             if not name or name in self._commentators:
                 raise ValueError(f"Commentator {name!r} is {'already added' if name else 'not named'}")
             if focus_team is not None and self._resolver.team_index(focus_team) is None:
                 raise ValueError(f"No team is called {focus_team!r}; teams: {[team.names for team in self.game.teams]}")
-            files = {c.file for c in self._commentators.values()}
-            stem = re.sub(r"[^\w.-]+", "_", name).strip("._") or "commentator"
-            file = next(f for f in (stem if i == 1 else f"{stem}-{i}" for i in range(1, len(files) + 2)) if f not in files)
+            taken = {_file_key(c.file) for c in self._commentators.values()}
+            stem = _stem(name) or "commentator"
+            file = next(f for f in (stem if i == 1 else f"{stem}-{i}" for i in itertools.count(1)) if _file_key(f) not in taken)
             transcript = yus.Transcript(game=self.game, commentator=name)
             self._commentators[name] = _Commentator(name, focus_team, file, transcript, EventExtractor(self.game.teams, timeout=self.timeout))
             focus = [c.focus_team for c in self._commentators.values()]
@@ -252,38 +276,51 @@ class GameSession:
             self._changed(data=True)
 
     def add_groups(self, commentator: str, groups: list[yus.TranscriptGroup]) -> None:
-        """Add a commentator's next transcript groups, in order (copies are kept; the groups are left as they are)."""
+        """Add a commentator's next transcript groups, in order (copies are kept; the groups are left as they are). Raises
+        ValueError, adding none, if their word times carry a UTC offset and the commentator's earlier ones don't, or the reverse."""
         with self._lock:
             c = self._get(commentator)
-            if self._finished:
-                raise RuntimeError("The session is finished")
-            for group in groups:
-                kept = yus.TranscriptGroup.model_validate(group.model_dump())
-                kept.transcript = c.transcript
-                c.transcript.groups.append(kept)
-                c.extractor.feed(kept)
-            self._hear(c)
-            if groups:
-                self._changed(data=True)
+            self._check_open()
+            _awareness(groups, c.aware, commentator)
+            fed = 0
+            try:
+                for group in groups:
+                    kept = yus.TranscriptGroup.model_validate(group.model_dump())
+                    self._feed(c, kept)
+                    fed += 1
+            finally:
+                if fed:
+                    self._hear(c)
+                    self._changed(data=True)
 
     def advance(self, now: dt.datetime, commentator: str | None = None) -> None:
         """Note that a commentator's transcript (None: every commentator's) is complete up to `now`, transcript time: a throw left
-        open for more than `timeout` seconds without words becomes final."""
+        open for more than `timeout` seconds without words becomes final. With several commentators, it also lets merged events
+        settle up to there. `now` may be naive or carry a UTC offset whatever the transcripts' times are (naive times are local)."""
         with self._lock:
+            targets = [self._get(commentator)] if commentator is not None else list(self._commentators.values())
+            if self._finished:
+                return
+            zone = self._zone()
             changed = False
-            for c in [self._get(commentator)] if commentator is not None else self._commentators.values():
-                before = c.extractor.final_count
-                c.extractor.advance(now)
-                c.advanced = now if c.advanced is None else max(c.advanced, now)
-                changed |= c.extractor.final_count != before
-            if changed:
-                self._changed(data=True)
+            try:
+                for c in targets:
+                    when = _as(now, c.awareness(), zone)
+                    before = self._state(c)
+                    c.extractor.advance(when)
+                    c.advanced = when if c.advanced is None else max(c.advanced, when)
+                    changed |= self._state(c) != before
+            finally:
+                if changed:
+                    self._changed(data=True)
 
     def describe(self, team: str, descriptions: list[str] | str, player: str | None = None, label: str | None = None, commentator: str | None = None) -> PlayerDescription:
         """Record that `descriptions` all mean one player of `team`: `player`, or an unknown person called `label` (PlayerResolver.describe).
         It applies to every event, earlier ones too. A commentator's own record beats shared ones (commentator=None) for their stream,
-        so to correct what a commentator was heard to say, pass that commentator. Raises ValueError (unknown team or player)."""
+        so to correct what a commentator was heard to say, pass that commentator. Raises ValueError (unknown team, player or commentator)."""
         with self._lock:
+            if commentator is not None:
+                self._get(commentator)
             descriptions = [descriptions] if isinstance(descriptions, str) else list(descriptions)
             record = self._record(PlayerDescription(team=team, descriptions=descriptions, player=player, label=label, commentator=commentator))
             self._changed(data=True)
@@ -291,14 +328,17 @@ class GameSession:
 
     def set_pending_text(self, commentator: str, text: str) -> None:
         """Show what live transcription guesses a commentator is saying (not used for events)."""
+        if not isinstance(text, str):
+            raise TypeError(f"Pending text must be a str, not {type(text).__name__}")
         with self._lock:
             c = self._get(commentator)
+            self._check_open()
             if c.pending_text != text:
                 c.pending_text = text
                 self._changed(data=False)
 
     def finish(self) -> None:
-        """End of the game: every event becomes final, and no more groups are taken."""
+        """End of the game: every event becomes final, and no more commentators, groups or pending text are taken."""
         with self._lock:
             if self._finished:
                 return
@@ -345,30 +385,58 @@ class GameSession:
         resolved: dict[str, yus.EventStream] = {}
         finals = []
         for c in self._commentators.values():
-            events = c.extractor.events
-            final = c.extractor.final_count
-            if c.resolver is not self._resolver:
-                c.resolver, c.resolved = self._resolver, []
-            c.resolved += [self._resolver.resolve_event(event, c.name) for event in events[len(c.resolved) : final]]
-            resolved_events = c.resolved[:final] + [self._resolver.resolve_event(event, c.name) for event in events[final:]]
+            events, final = c.extractor.events, c.extractor.final_count
             transcripts[c.name] = list(c.transcript.groups)
             raw[c.name] = yus.EventStream(game=self.game, events=events)
-            resolved[c.name] = yus.EventStream(game=self.game, events=resolved_events)
+            resolved[c.name] = yus.EventStream(game=self.game, events=self._resolve(c, events, final))
             finals.append(final)
-        merge = None
-        if not self._commentators:
-            official, settled = yus.EventStream(game=self.game), 0
-        elif self._merger is None:
-            official, settled = next(iter(resolved.values())), finals[0]
-        else:
-            self._merger_before = copy.deepcopy(self._merger.segments)
-            merge = self._merger.merge(list(resolved.values()))
-            official, settled = merge.stream, _settled(merge, finals)
+        official, settled, merge = self._official(list(resolved.values()), finals)
         if self._finished:
             settled = len(official.events)
         single = next(iter(self._commentators)) if len(self._commentators) == 1 else None
         views = _Views(official, self.game.teams, settled, self._resolver, single)
         return _Computed(self._data_version, transcripts, raw, resolved, official, settled, merge, list(self._associations), self._resolver.descriptions, views)
+
+    def _resolve(self, c: _Commentator, events: list[yus.Event], final: int) -> list[yus.Event]:
+        """The commentator's raw events resolved: final ones once (until a description changes), provisional ones every time."""
+        if c.resolver is not self._resolver:
+            c.resolver, c.resolved = self._resolver, []
+        c.resolved += [self._resolver.resolve_event(event, c.name) for event in events[len(c.resolved) : final]]
+        return c.resolved + [self._resolver.resolve_event(event, c.name) for event in events[final:]]
+
+    def _official(self, streams: list[yus.EventStream], finals: list[int]) -> tuple[yus.EventStream, int, MergeResult | None]:
+        """The official stream, how many of its events are settled, and the merge (with several commentators)."""
+        if not streams:
+            return yus.EventStream(game=self.game), 0, None
+        if self._merger is None:
+            return streams[0], finals[0], None
+        self._merger_before = copy.deepcopy(self._merger.segments)
+        self._merger.options["settle"] = self._settle(streams, finals)
+        merge = self._merger.merge(streams)
+        return merge.stream, _settled(merge, finals), merge
+
+    def _settle(self, streams: list[yus.EventStream], finals: list[int]) -> float:
+        """LiveMerger's `settle` for the next merge: the seconds it takes events still to come to be at most before its latest
+        event. That is SETTLE, or more when a commentator lags further. A commentator's events still to come are no earlier
+        than their progress, and their provisional raw events may still change. Infinite while a commentator's progress is unknown."""
+        assert self._merger is not None
+        segments = self._merger.segments + [None] * (len(streams) - len(self._merger.segments))
+        latest: list[tuple[dt.datetime, float]] = []
+        earliest: list[tuple[dt.datetime, float]] = []
+        for c, stream, final, segs in zip(self._commentators.values(), streams, finals, segments):
+            progress = c.progress(self.timeout)
+            if progress is None:
+                return math.inf
+            offsets = [offset for _, offset in segs] if segs else [0.0]  # an estimated offset: merging allows for it
+            earliest.append((min([progress, *(event.when for event in stream.events[final:])]), offsets[-1]))
+            if stream.events:
+                latest.append((max(event.when for event in stream.events), max(offsets)))
+        if not latest:
+            return SETTLE
+        clock = _clock([when for when, _ in latest + earliest], self._zone())
+        top = max(clock(when) + dt.timedelta(seconds=offset) for when, offset in latest)
+        bottom = min(clock(when) + dt.timedelta(seconds=offset) for when, offset in earliest)
+        return max(SETTLE, (top - bottom).total_seconds() + 0.001)  # an event exactly at the bound is not settled, whatever the rounding
 
     # ------------------------------------------------------------------ persistence
 
@@ -411,14 +479,14 @@ class GameSession:
             session.add_commentator(entry.name, entry.focus_team)
             c = session._commentators[entry.name]
             c.file, c.pending_text, c.heard = entry.file, entry.pending_text, sum(a.commentator == entry.name for a in saved.associations)
-            c.transcript = yus.Transcript.model_validate_json((directory / "transcripts" / f"{entry.file}.json").read_text())
-            c.transcript.game, c.transcript.commentator = session.game, entry.name
-            for group in c.transcript.groups:
-                c.extractor.feed(group)
+            transcript = yus.Transcript.model_validate_json((directory / "transcripts" / f"{entry.file}.json").read_text())
+            _awareness(transcript.groups, None, entry.name)
+            for group in transcript.groups:
+                session._feed(c, group)
             session._hear(c)  # only identifications not heard before
             if entry.advanced is not None:
-                c.extractor.advance(entry.advanced)
-                c.advanced = entry.advanced
+                c.advanced = _as(entry.advanced, c.awareness(), session._zone())
+                c.extractor.advance(c.advanced)
         if saved.finished:
             for c in session._commentators.values():
                 c.extractor.finish()
@@ -436,10 +504,37 @@ class GameSession:
             raise ValueError(f"Unknown commentator {name!r}; add_commentator() first. Commentators: {list(self._commentators)}")
         return self._commentators[name]
 
+    def _check_open(self) -> None:
+        if self._finished:
+            raise RuntimeError("The session is finished")
+
     def _changed(self, data: bool) -> None:
         self._version += 1
         if data:
             self._data_version += 1
+
+    def _feed(self, c: _Commentator, group: yus.TranscriptGroup) -> None:
+        """Give a group (kept as it is) to the commentator's extractor and transcript."""
+        group.transcript = c.transcript
+        c.extractor.feed(group)
+        c.transcript.groups.append(group)
+        if group.words:
+            if c.aware is None:
+                c.aware = group.words[0].start.utcoffset() is not None
+                c.advanced = _as(c.advanced, c.aware, self._zone()) if c.advanced is not None else None
+            c.spoke = (group.words[0].start, max(word.start + word.duration for word in group.words))
+
+    def _state(self, c: _Commentator) -> tuple[int, dt.datetime | None]:
+        """What advance() can change that a snapshot shows: final events and, when merging, how far merged events can settle."""
+        return c.extractor.final_count, c.progress(self.timeout) if self._merger is not None else None
+
+    def _zone(self) -> dt.tzinfo | None:
+        """The zone naive times are taken to be in when compared with times that carry a UTC offset, as merging does: that of the
+        first commentator whose times have an offset other than UTC, else None (this system's zone)."""
+        for c in self._commentators.values():
+            if c.spoke is not None and c.spoke[0].utcoffset() not in (None, dt.timedelta(0)):
+                return c.spoke[0].tzinfo
+        return None
 
     def _record(self, description: PlayerDescription) -> PlayerDescription:
         """Add a description to a new resolver (snapshots keep the old one) and use it from now on."""
@@ -470,6 +565,44 @@ def _settled(merge: MergeResult, finals: list[int]) -> int:
     return merge.settled
 
 
+def _stem(name: str) -> str:
+    """A file name stem for a commentator's name: "B / Other" -> "B_Other"."""
+    return re.sub(r"[^\w.-]+", "_", unicodedata.normalize("NFC", name)).strip("._")
+
+
+def _file_key(stem: str) -> str:
+    """Stems that name the same file on a case-insensitive disk (macOS, Windows) have the same key."""
+    return unicodedata.normalize("NFC", stem).casefold()
+
+
+def _awareness(groups: list[yus.TranscriptGroup], aware: bool | None, commentator: str) -> bool | None:
+    """Whether the groups' word times carry a UTC offset, given whether the commentator's do (None: unknown). ValueError for a mix."""
+    for group in groups:
+        for word in group.words:
+            has = word.start.utcoffset() is not None
+            if aware is None:
+                aware = has
+            elif has != aware:
+                kinds = ("naive", "with a UTC offset")
+                raise ValueError(f"{commentator!r}'s word times are {kinds[aware]}, but {word.text!r} at {word.start} is {kinds[has]}")
+    return aware
+
+
+def _as(when: dt.datetime, aware: bool | None, zone: dt.tzinfo | None) -> dt.datetime:
+    """`when`, naive or with a UTC offset as `aware` says (None: as it is). Naive times are wall-clock times in `zone` (None: this system's)."""
+    if aware is None or (when.utcoffset() is not None) == aware:
+        return when
+    if aware:
+        return when.replace(tzinfo=zone) if zone is not None else when.astimezone()
+    return when.astimezone(zone).replace(tzinfo=None)
+
+
+def _clock(times: list[dt.datetime], zone: dt.tzinfo | None) -> Callable[[dt.datetime], dt.datetime]:
+    """A function that makes these times comparable: as they are, unless some carry a UTC offset and some don't (then all naive)."""
+    aware = {when.utcoffset() is not None for when in times}
+    return (lambda when: when) if len(aware) < 2 else (lambda when: _as(when, False, zone))
+
+
 def _write_json(path: pathlib.Path, data: object) -> None:
     """Write JSON so that a reader never sees half a file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,6 +627,7 @@ def replay(
     ends: speed 1 in real time, 2 twice as fast, 0 all at once. While waiting, the session is advanced every `tick` seconds of
     transcript time, so open throws time out as they would live. `on_update(snapshot)` is called after each group and after an
     advance that changed something. Returns the number of groups fed (fewer if `stop` is set). The session is not finished."""
+    _check_pace(speed, tick)
     if not isinstance(transcript, yus.Transcript):
         transcript = yus.Transcript.model_validate_json(pathlib.Path(transcript).read_text())
     if commentator not in session.commentators:
@@ -520,6 +654,13 @@ def replay(
         if on_update is not None:
             on_update(session.snapshot())
     return fed
+
+
+def _check_pace(speed: float, tick: float) -> None:
+    if not speed >= 0:
+        raise ValueError(f"speed must be 0 (all at once) or more, not {speed}")
+    if speed > 0 and not tick > 0:
+        raise ValueError(f"tick must be more than 0 seconds, not {tick}")
 
 
 __all__ = ["CommentatorState", "GameSession", "GameSnapshot", "HeardAssociation", "replay"]
