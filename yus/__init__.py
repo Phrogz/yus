@@ -77,7 +77,9 @@ class Interpretation(pydantic.BaseModel):
 
     words: list[Word] = []
     confidence: float = pydantic.Field(default=0.0, description="The confidence of this interpretation.")
-    group: TranscriptGroup | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent TranscriptGroup (excluded from serialization).")
+    group: TranscriptGroup | None = pydantic.Field(
+        default=None, exclude=True, repr=False, description="Back-reference to the parent TranscriptGroup (excluded from serialization and repr)."
+    )
 
     @property
     def transcript(self) -> str:
@@ -116,7 +118,9 @@ class TranscriptGroup(pydantic.BaseModel):
     """A section of words that definitely go together."""
 
     interpretations: list[Interpretation] = []
-    transcript: Transcript | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Transcript (excluded from serialization).")
+    transcript: Transcript | None = pydantic.Field(
+        default=None, exclude=True, repr=False, description="Back-reference to the parent Transcript (excluded from serialization and repr)."
+    )
 
     def model_post_init(self, __context: object) -> None:
         """Restore back-references after deserialization."""
@@ -149,7 +153,7 @@ class TranscriptGroup(pydantic.BaseModel):
 class Transcript(pydantic.BaseModel):
     """Transcript of a game."""
 
-    game: Game | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Game (excluded from serialization).")
+    game: Game | None = pydantic.Field(default=None, exclude=True, repr=False, description="Back-reference to the parent Game (excluded from serialization and repr).")
     commentator: str | None = pydantic.Field(default=None, description="The name of the person providing this play-by-play.")
     groups: list[TranscriptGroup] = []
 
@@ -222,8 +226,10 @@ _EVENT_TYPES[Event.type_key()] = Event
 
 
 class EventStream(pydantic.BaseModel):
-    game: Game | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the parent Game (excluded from serialization).")
-    transcript: Transcript | None = pydantic.Field(default=None, exclude=True, description="Back-reference to the source Transcript (excluded from serialization).")
+    game: Game | None = pydantic.Field(default=None, exclude=True, repr=False, description="Back-reference to the parent Game (excluded from serialization and repr).")
+    transcript: Transcript | None = pydantic.Field(
+        default=None, exclude=True, repr=False, description="Back-reference to the source Transcript (excluded from serialization and repr)."
+    )
     events: list[Event] = []
 
     @pydantic.field_validator("events", mode="before")
