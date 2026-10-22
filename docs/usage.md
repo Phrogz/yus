@@ -161,7 +161,7 @@ A team JSON file describes one team and its players. Here's the basic structure:
      become one word with the official name (keeping trailing punctuation, e.g. "feather brush," becomes "Adam Federbusch,").
      Only list true mishearings that any commentator would trigger. A description one commentator happens to use
      ("the kid", "red shorts") is not a mondegreen or a nickname: leave it out of team files; mapping such descriptions
-     to players is a later, per-game step.
+     to players is a later, per-game step (see [Game Description Files](#game-description-files)).
 
 **Empty arrays** (`[]`) are fine for players with no nicknames or mondegreens - it still helps the ASR know that name exists.
 
@@ -247,13 +247,55 @@ START_TIME    END_TIME    TEXT
 
 This is easier for human review but loses individual word timing and confidence data.
 
+## Game Description Files
+
+Commentators often call players by descriptions ("the kid", "naked", "yellow border") when they don't know a name. These are
+not mondegreens or nicknames and don't belong in team files: they are what one commentator said in one game. After event
+extraction, and before streams are merged or stats computed, event unification resolves every event's player and receiver.
+Names the roster knows (full names, nicknames, mondegreens, or a first or last name unique on the team) resolve on their own;
+descriptions resolve through a per-game description file, which can be filled in after the game or added to during it:
+
+```json
+{
+  "players": [
+    {"team": "white", "descriptions": ["the kid", "kidd"], "player": "Serayan Knappe-Butler"},
+    {"team": "black", "descriptions": ["yellow border", "yellow fringe"], "label": "yellow sleeve"},
+    {"team": "white", "descriptions": ["red shorts"], "player": "Kaia Mann", "commentator": "Gavin Kistner"}
+  ]
+}
+```
+
+- `team` - any name of the player's team (`white`, `Dump & Drizzle`, ...)
+- `descriptions` - what commentators called the player; matching ignores case, punctuation, possessives and a leading "the".
+  Include mishearings of the description too ("kidd").
+- `player` - the roster player meant. Omit it while nobody knows; the descriptions are still treated as one person, named
+  `label` (default: the first description). Identify that person later by describing the label: `["yellow sleeve"]` → a player.
+- `commentator` - apply only to that commentator's streams (default: all). A commentator's own entry beats a shared one;
+  otherwise later entries win.
+
+```python
+from yus.processing.event_unification import GameDescriptions, PlayerResolver
+
+resolver = PlayerResolver(game.teams, GameDescriptions.model_validate_json(path.read_text()))
+resolved = resolver.resolve_stream(raw_stream)    # pass commentator=... for a stream loaded from JSON
+resolver.unresolved(raw_stream)                   # [("Dump & Drizzle", "glasses", 32), ...] still needing a person
+resolver.unmentioned_players(raw_stream)          # roster players nobody has named: the likely identities
+resolver.describe("white", ["glasses"], player="Ari Weissman")   # learned live (hypothetical here); re-resolve to fix earlier events
+path.write_text(resolver.descriptions.model_dump_json(indent=2))  # keep what was learned with the game
+```
+
+Live, re-resolve the raw stream whenever an event or a description arrives (a millisecond or two for a 200-event game).
+[tests/data/gruindoor_20250114T2030-descriptions.json](../tests/data/gruindoor_20250114T2030-descriptions.json) is a complete
+example. Not built yet: turning spoken statements ("red shorts is Kaia") into descriptions, and fuzzy name matching.
+
 ## Next Steps
 
 After transcription, the structured transcript can be:
 
 1. **Reviewed and corrected** - Check for any remaining errors
 2. **Converted to events** - Extract game actions (throws, scores, etc.)
-3. **Analyzed for statistics** - Generate player and team stats
-4. **Visualized** - Create interactive game visualizations
+3. **Resolved to players** - Map the names and descriptions commentators used to roster players (see [Game Description Files](#game-description-files))
+4. **Analyzed for statistics** - Generate player and team stats
+5. **Visualized** - Create interactive game visualizations
 
 See the project documentation for information on event extraction and statistics generation.

@@ -31,7 +31,13 @@
        * `Infraction`: TBD
 6. _Event Unification_
    * One or more event streams for a single game are merged into a single event stream, performing:
-     * Player normalization: align players described by the commentator with actual players in the game.
+     * Player resolution (built: `yus.processing.event_unification.PlayerResolver`): replace the names each commentator
+       used ("pikachu", "the kid", "yellow border") with roster players. Team files supply what holds in every game (names,
+       nicknames, mondegreens); a per-game `GameDescriptions` file supplies what a commentator called someone in this game
+       ("the kid" is Serayan Knappe-Butler) and groups descriptions of players nobody has named yet. Names it can't resolve
+       stay as spoken and, with still-unknown described players, are listed for a person to identify. It runs on each
+       commentator's stream after event extraction and before event merging and stats; live, it re-resolves the raw events
+       whenever an event or a description arrives, so a late description also fixes earlier events.
      * Event merging: detect when two events in different streams describe the same action on the field,
        merging and resolving conflicts between them.
 7. `DataFrame`(s)

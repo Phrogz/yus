@@ -11,13 +11,15 @@
 - Ground-truth fixtures live in [tests/data/gruindoor_20250114T2030.py](../tests/data/gruindoor_20250114T2030.py):
   - `build_transcript()` constructs timed `Word`s and `TranscriptGroup`s.
   - `build_raw_stream()` shows how `EventStream.events` are built from transcripts for indoor Ultimate.
-  - `build_unified_stream()` demonstrates alias normalization for player names (reverse map over nicknames).
+  - `build_unified_stream()` is the hand-made expected player resolution; `PlayerResolver` in
+    [yus/processing/event_unification/players.py](../yus/processing/event_unification/players.py) reproduces it from the team files
+    plus [tests/data/gruindoor_20250114T2030-descriptions.json](../tests/data/gruindoor_20250114T2030-descriptions.json).
 
 ## Architectural phases (detail)
 
 - Transcription: ASR responses become `Transcript`/`TranscriptGroup`/`Interpretation`/`Word` structures. See Google Speech-to-Text adapter in [yus/util.py](../yus/util.py) and contribution goals in [docs/CONTRIBUTING.md](../docs/CONTRIBUTING.md).
 - Event extraction: convert `Transcript` to sport-specific events (`Throw`, `Defense`, etc.). The most complete reference mapping is in [tests/data/gruindoor_20250114T2030.py](../tests/data/gruindoor_20250114T2030.py) (`build_raw_stream()`).
-- Event unification: merge multiple streams and normalize player aliases; see the alias map and reverse-map normalization in [tests/data/gruindoor_20250114T2030.py](../tests/data/gruindoor_20250114T2030.py) (`build_unified_stream()`).
+- Event unification: player resolution is built in [yus/processing/event_unification/players.py](../yus/processing/event_unification/players.py) (`PlayerResolver`: team files plus a per-game descriptions file such as [tests/data/gruindoor_20250114T2030-descriptions.json](../tests/data/gruindoor_20250114T2030-descriptions.json)); merging multiple streams is not built yet. `build_unified_stream()` in [tests/data/gruindoor_20250114T2030.py](../tests/data/gruindoor_20250114T2030.py) is the expected result.
 - Stat generation: planned to derive pandas DataFrames from unified event streams and then aggregate; see architectural intent in [docs/architecture.md](../docs/architecture.md).
 - Mobile/web app: visualization planned via Dash/Flask; track intended UI usage in [docs/architecture.md](../docs/architecture.md) and dependencies in [pyproject.toml](../pyproject.toml).
 

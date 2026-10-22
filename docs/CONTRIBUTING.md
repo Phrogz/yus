@@ -42,7 +42,9 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
   did, merging two events that describe the same action, etc.
 
   * Test event streams and their expected unified output will be in the `tests/data` directory.
-    _(Currently there's only one test event stream, where unification simply assigns the right names to some players.)_
+    _(Currently there's only one test event stream, where unification simply assigns the right names to some players.
+    That part is built: `PlayerResolver` in `yus/processing/event_unification` maps names and per-game descriptions to
+    players. Merging streams from several commentators is not built yet.)_
 
 * **Stats**: Given a stream of events with timestamps, player and team names, throw types, outcomes, brainstorm on what
   sorts of stats you'd like to see and play with.

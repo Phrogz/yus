@@ -228,7 +228,7 @@ __Key Options:__
 │        - Current game state (possession, last player)                     │
 │     b. Call local LLM                                                     │
 │     c. Parse JSON response into Event objects                             │
-│     d. Validate and fix player names against team rosters                 │
+│     d. Keep player names as spoken (unification resolves them later)      │
 │     e. Update game state based on events                                  │
 │                                                                           │
 │  4. Assemble all events into yus.EventStream                              │
@@ -317,7 +317,8 @@ The output will be a JSON-serialized `EventStream`, in the same format as
 
 | Challenge                            | Mitigation                                              |
 | ------------------------------------ | ------------------------------------------------------- |
-| Player names not in team roster      | Fuzzy match to roster; flag unresolved for review       |
+| Player names not in team roster      | Keep as spoken; event unification's PlayerResolver maps |
+|                                      | them to players and lists unresolved names for review   |
 | Context loss across groups           | Include sliding window of N prior groups in prompt      |
 | Ambiguous team attribution           | Track possession state; require explicit "for dark" etc |
 | LLM outputs malformed JSON           | Use JSON repair library; retry with stricter prompt     |
