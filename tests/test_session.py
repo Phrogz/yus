@@ -369,33 +369,38 @@ def test_threads_feed_and_read_concurrently(game: yus.Game, transcript: yus.Tran
     assert snap.raw["B"].events == extract_events(other, game.teams, timeout=6.0).events
 
 
+AUDIO = pathlib.Path(os.environ.get("YUS_DATA", pathlib.Path.home() / "Documents/Personal/yus-data")) / "drive/20250114T2030-0700.ogg"
+
+
 @pytest.mark.skipif(os.environ.get("YUS_SLOW_TESTS") != "1", reason="needs the Whisper model, a GPU and the game's audio: set YUS_SLOW_TESTS=1")
 def test_live_transcription_of_the_real_audio_feeds_a_session(game: yus.Game, descriptions: GameDescriptions):
+    """The first 180 s of the game's audio (t=0 is 20:30:33), transcribed live into a session, against the ground truth."""
+    pytest.importorskip("mlx_whisper", reason="mlx-whisper is only installed on Apple Silicon (uv sync --extra mlx)")
+    if not AUDIO.exists():
+        pytest.skip(f"no audio at {AUDIO}")
+    from yus.processing.evaluation import score
     from yus.processing.transcription import live
     from yus.processing.transcription import transcribe as tr
 
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    audio_path = pathlib.Path.home() / "Documents/Personal/yus-data/drive/20250114T2030-0700.ogg"
-    whisper = live.load_whisper("mlx", "mlx-community/whisper-large-v3-turbo")
-    transcriber = live.LiveTranscriber(
-        start=dt.datetime(2025, 1, 14, 20, 30, 33),
-        prompt=live.live_prompt(game.teams, whisper),
-        replacements=tr.load_replacements("ultimate/indoor", game.teams),
-        transcribe=whisper,
-    )
+    whisper = live.MlxWhisper("large-v3-turbo")
+    start = dt.datetime(2025, 1, 14, 20, 30, 33)
+    transcriber = live.LiveTranscriber(start, live.live_prompt(game.teams, whisper), tr.load_replacements("ultimate/indoor", game.teams), transcribe=whisper)
     session = GameSession(game, descriptions)
     session.add_commentator("Gavin Kistner")
-    slowest = [0.0]
+    slowest = 0.0
 
     def on_groups(groups: list[yus.TranscriptGroup], now: float) -> None:
+        nonlocal slowest
         session.add_groups("Gavin Kistner", groups)
         session.set_pending_text("Gavin Kistner", transcriber.pending_text)
         started = time.perf_counter()
         session.snapshot().stats
-        slowest[0] = max(slowest[0], time.perf_counter() - started)
+        slowest = max(slowest, time.perf_counter() - started)
 
-    live.simulate(transcriber, live.load_audio(audio_path), on_groups=on_groups)
+    live.simulate(transcriber, live.load_audio(AUDIO)[: 180 * live.SAMPLE_RATE], on_groups=on_groups)
     session.finish()
     snap = session.snapshot()
-    print(f"\n{snap.summary}; {len(snap.official.events)} events; slowest snapshot with stats {slowest[0] * 1000:.0f} ms")
-    assert sum(snap.score.values()) >= 20 and slowest[0] < 0.1
+    cut = start + dt.timedelta(seconds=175)  # an event under way at 180 s may be cut off
+    result = score(snap.official, game.official_stream, resolve=PlayerResolver(game.teams, descriptions), stop=cut)
+    print(f"\n{snap.summary}; event F1 {result.overall.f1:.3f}, exact {result.exact.f1:.3f}; slowest snapshot with stats {slowest * 1000:.0f} ms")
+    assert result.overall.f1 > 0.8 and slowest < 0.1
