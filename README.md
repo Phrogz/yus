@@ -122,11 +122,14 @@ or likely that there will be confusion, causing two people to cover the same pla
   brew install ffmpeg
   ```
 
-1. Install Python virtual environment with all necessary dependencies:
+1. Install Python virtual environment with all necessary dependencies. On Apple Silicon (macOS 14+), add the `mlx` extra
+   to transcribe on the GPU:
 
   ```bash
-  uv sync
+  uv sync --extra mlx
   ```
+
+  Elsewhere (including Intel Macs and macOS 13 or older), use plain `uv sync`.
 
 ### Running
 
@@ -139,11 +142,20 @@ yus-transcribe /path/to/audio.wav
 Optional flags:
 
 ```bash
-yus-transcribe /path/to/audio.wav \
+yus-transcribe /path/to/20250114T2030-0700.ogg \
   --sport ultimate/indoor \
+  --team team_dump_and_drizzle.json \
+  --team team_category_5.json \
   --terms-file /path/to/terms.txt \
   --prompt "custom phrase" \
   --text
 ```
 
 By default, the transcript is written next to the audio file as `*.transcript.json` (use `--text` for `*.transcript.txt`).
+Word timestamps are local wall-clock times starting from the recording's creation time in the file's metadata, else the time in
+its file name (e.g. `20250114T2030-0700`); pass `--recording-start` to set it explicitly.
+
+On Apple Silicon Macs (macOS 14+), `uv sync --extra mlx` installs `mlx-whisper`, and transcription then runs on the GPU with the
+`large-v3-turbo` model. Otherwise it uses `faster-whisper` (`large-v3`, on CUDA when available). Choose explicitly with
+`--backend mlx` or `--backend faster-whisper`.
+See [docs/usage.md](docs/usage.md) for all options.

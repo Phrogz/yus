@@ -17,6 +17,10 @@ dependencies = [
     "pandas>=2.2.3",
 ]
 
+[project.optional-dependencies]
+# Apple Silicon GPU backend for yus-transcribe; mlx only ships wheels for macOS 14+ on arm64.
+mlx = ["mlx-whisper>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
 [project.scripts]
 yus-transcribe = "yus.processing.transcription.transcribe:main"
 

@@ -12,12 +12,24 @@ yus-transcribe path/to/audio.wav
 
 This will create a JSON transcript file in the same directory as your audio file.
 
+### Backends and Models
+
+`yus-transcribe` runs OpenAI's Whisper model through one of two implementations:
+
+- **mlx** (`mlx-whisper`) runs on the GPU of Apple Silicon Macs with macOS 14 or newer. Install it with `uv sync --extra mlx`.
+  Default model: `large-v3-turbo`.
+- **faster-whisper** (CTranslate2) runs on NVIDIA GPUs (CUDA) or the CPU. It has no Mac GPU support. Default model: `large-v3`.
+
+`--backend auto` (the default) picks mlx when it is installed and loads on an Apple Silicon Mac, and faster-whisper otherwise
+(with a note if mlx-whisper is installed but MLX fails to load).
+
 ### Common Options
 
 ```bash
 yus-transcribe audio.wav \
   --sport ultimate/indoor \
-  --model large-v3 \
+  --backend mlx \
+  --model large-v3-turbo \
   --recording-start "2025-01-14T20:30:00" \
   --team team_dump_and_drizzle.json \
   --team team_category_5.json \
@@ -27,9 +39,16 @@ yus-transcribe audio.wav \
 **Key Options:**
 
 - `--sport` - Sport type for terminology (default: `ultimate/indoor`)
-- `--model` - Whisper model size: `tiny`, `base`, `small`, `medium`, `large-v3` (default: `large-v3`)
-- `--recording-start` - ISO timestamp when recording started (default: `now`)
-- `--team` - Team JSON file path (can be specified multiple times for different teams)
+- `--backend` - `auto`, `mlx` or `faster-whisper` (default: `auto`; see [Backends and Models](#backends-and-models))
+- `--model` - Whisper model size: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`; or a Hugging Face repo id or local path
+  (default: `large-v3-turbo` for mlx, `large-v3` for faster-whisper)
+- `--recording-start` - ISO timestamp when recording started, `now`, or `auto` (default). `auto` uses the creation time in the
+  file's metadata (`com.apple.quicktime.creationdate`, as iPhone recordings have, else `creation_time`), else a time in a file
+  name like `20250114T2030-0700.ogg` (seconds optional; UTC offset optional, as `Z`, `-0700` or `-07:00`), else `now`.
+  The start used, and where it came from, is printed. All times are naive local wall-clock times: a time with a UTC offset
+  keeps the time as written (`20:30-07:00` is 20:30), and a UTC time (`creation_time`, a file name ending in `Z`, or an explicit
+  value ending in `Z` or `+00:00`) is converted to this computer's time zone.
+- `--team` - Team JSON file path (can be specified multiple times for different teams). A file that fails to load or validate stops the run with an error.
 - `--output` - Output file path (default: `<audio>.transcript.json`)
 - `--text` - Write plain text instead of JSON
 - `--start` - Start transcription at this time (seconds)
@@ -40,13 +59,37 @@ yus-transcribe audio.wav \
 ### Advanced Options
 
 - `--language` - Language code (default: `en`)
-- `--device` - Device to use: `auto`, `cpu`, `cuda` (default: `auto`)
+- `--terms-file` - File with custom phrases (one per line) to bias the ASR toward
+- `--prompt` - Additional prompt text to guide the ASR
+- `--condition-on-previous-text` - Also prompt each 30-second window with the text decoded so far (Whisper's own default).
+  Off by default: on recorded play-by-play it tripled the word error rate (0.28 vs 0.10), because one misheard window derails the next.
+- `--no-mondegreens` - Keep known mishearings as heard instead of replacing them (see [Team JSON Files](#team-json-files))
+
+faster-whisper only:
+
+- `--device` - Device to use: `auto`, `cpu`, `cuda` (default: `auto`, which uses CUDA when CTranslate2 finds a GPU)
 - `--compute-type` - CTranslate2 compute type (default: `float32`)
 - `--num-workers` - Number of worker threads (default: 1)
 - `--cpu-threads` - Number of CPU threads (default: 8)
 - `--no-vad` - Disable Voice Activity Detection (VAD is enabled by default to filter background noise)
-- `--terms-file` - File with custom phrases (one per line) to bias the ASR toward
-- `--prompt` - Additional prompt text to guide the ASR
+- `--hotwords` - Prime every 30-second window with the prompt, not just the first (see [How the Prompt Is Built](#how-the-prompt-is-built))
+
+### How the Prompt Is Built
+
+Whisper can be primed with a text prompt, but it only uses the last 223 tokens of it (roughly 700 characters).
+`yus-transcribe` builds a prompt that fits that budget, measured with the model's own tokenizer:
+
+1. Your `--prompt` text.
+2. `Players:` each player once, with nicknames in parentheses, e.g. `Matt Whitlock (Pikachu), Kaia Mann, ...`
+3. `Terms:` your `--terms-file` phrases, then the sport's terms from most to least likely, until the budget is full.
+
+The prompt and its token count are printed when transcription starts. Whisper decodes audio in 30-second windows,
+and the prompt primes the first one; the rest are decoded on their own (see `--condition-on-previous-text`).
+
+With faster-whisper, `--hotwords` passes the prompt as "hotwords" instead, which primes every window. It is off by default.
+faster-whisper's `--hotwords` itself was not measured; but on the test game, in an mlx emulation of applying the prompt to every
+window, priming every window with the player and term lists made Whisper repeat the lists back ("Terms, turn, turn, turn, ...")
+and invent words, raising the word error rate from about 0.08 to 0.4-0.7.
 
 ## Team JSON Files
 
@@ -54,7 +97,7 @@ Team JSON files help improve transcription accuracy by teaching the Automatic Sp
 
 1. **Player names** - So it recognizes "Federbusch" instead of hearing gibberish
 2. **Nicknames** - So you can say "Pikachu" or "Matt Whitlock" interchangeably
-3. **Mondegreens** - So "feather brush" gets corrected to "Federbusch"
+3. **Mondegreens** - So "feather brush" gets corrected to "Adam Federbusch"
 
 > **What is a mondegreen?** A mondegreen is a mishearing or misinterpretation of a phrase,
 > especially in speech recognition. The term comes from a mishearing of the phrase
@@ -113,7 +156,10 @@ A team JSON file describes one team and its players. Here's the basic structure:
 1. **Simple array** - Just nicknames: `["Nickname1", "Nickname2"]`
 2. **PlayerInfo object** with:
    - `nicknames` (array) - Alternative names you might use during commentary
-   - `mondegreens` (array) - Common ASR mistakes (mondegreens) that should be corrected to the official name
+   - `mondegreens` (array) - Common ASR mistakes (mondegreens) that should be corrected to the official name.
+     A mondegreen may be several words ("feather brush"); matching ignores case and punctuation, and the matched words
+     become one word with the official name (keeping trailing punctuation, e.g. "feather brush," becomes "Adam Federbusch,").
+     Put descriptors you really say (e.g. "close crop") in `nicknames` if the transcript should keep them as said.
 
 **Empty arrays** (`[]`) are fine for players with no nicknames or mondegreens - it still helps the ASR know that name exists.
 
@@ -134,8 +180,9 @@ A team JSON file describes one team and its players. Here's the basic structure:
 - **Physical descriptions** - If you don't know everyone's name yet, use distinctive features as
   temporary "nicknames": `"Unknown Player": ["red shorts", "tall guy"]`
 - **Lower case in mondegreen** - The correction is case-insensitive, so you can use lowercase for mondegreens
-- **First and last names** - Individual first/last names are automatically extracted, so
-  "Adam Federbusch" makes both "Adam" and "Federbusch" available
+- **Full names** - List players by full name; the prompt lists each full name once (not first and last names separately)
+  to leave room for more players and terms
+- **Check replacements** - At the end of a run, `yus-transcribe` lists each mondegreen it replaced and how often
 
 ### Using Multiple Team Files
 
