@@ -127,6 +127,22 @@ def test_a_backlog_longer_than_the_window_is_decoded_in_steps() -> None:
     assert max(b[0] - a[1] for a, b in zip(fake.windows, fake.windows[1:])) <= 0  # every window overlaps the previous one
 
 
+def test_horizon_is_where_every_earlier_word_has_been_returned() -> None:
+    """EventExtractor.advance() needs the time up to which the transcript is complete: no word returned later starts before it."""
+    lt = transcriber(FakeWhisper(PLAY))
+    audio = ramp(25.0)
+    horizons: list[tuple[dt.datetime, int]] = []
+    groups: list[yus.TranscriptGroup] = []
+    for pos in range(0, len(audio), SR // 2):
+        groups += lt.feed(audio[pos : pos + SR // 2])
+        horizons.append((lt.horizon, len(groups)))
+    groups += lt.flush()
+    assert all(w.start >= horizon for horizon, n in horizons for g in groups[n:] for w in g.words)
+    assert [h for h, _ in horizons] == sorted(h for h, _ in horizons)
+    assert horizons[17][0] == T0 + dt.timedelta(seconds=5.0)  # at 9 s: nothing heard after "glasses" (3.9 s) for force_s
+    assert lt.horizon == T0 + dt.timedelta(seconds=25.0)
+
+
 def commit_times(lt: live.LiveTranscriber, seconds: float, block_s: float = 0.5) -> dict[str, float]:
     """Feed in blocks and note how much audio had arrived when each word was committed."""
     audio = ramp(seconds)

@@ -197,6 +197,7 @@ class LiveTranscriber:
         self._decoded = 0  # ...when the last decode ran
         self._open: list[TimedWord] = []  # committed words of the group not yet closed
         self._pending: list[TimedWord] = []  # the last decode's uncommitted words
+        self._horizon = 0.0
         self._flushed = False
 
     @property
@@ -216,6 +217,13 @@ class LiveTranscriber:
     def audio_s(self) -> float:
         """Seconds of audio received."""
         return self._received / SAMPLE_RATE
+
+    @property
+    def horizon(self) -> dt.datetime:
+        """The time up to which every word has been returned in a group, for EventExtractor.advance(): the start of the first word of the
+        open group or of the pending hypothesis, or with neither, the end of the last committed word or force_s before the end of the
+        latest decode (a later decode rarely adds an earlier word), whichever is later. It never decreases; after flush() it is the end."""
+        return self.start + dt.timedelta(seconds=round(self.audio_s if self._flushed else self._horizon, 3))
 
     def feed(self, samples: np.ndarray) -> list[yus.TranscriptGroup]:
         """Add mono audio at `sample_rate` that just arrived; return the groups completed by it. Decodes when `period_s` of new audio has
@@ -271,6 +279,8 @@ class LiveTranscriber:
         self._pending = new[n:]
         if self._open and self._paused(now):
             groups.append(self._close())
+        delivered = max(self.committed[-1].end if self.committed else 0.0, now - self.force_s)
+        self._horizon = max(self._horizon, min([delivered] + [words[0].start for words in (self._open, self._pending) if words]))
         self.passes.append(DecodePass(end=now, compute=compute, words=len(new), committed=n))
         return groups
 
@@ -451,7 +461,7 @@ class LiveTimings(pydantic.BaseModel):
         return (
             f"Word latency (end of word -> committed): {stats(self.word_latency)} over {len(self.word_latency)} words\n"
             f"Group latency (end of group -> closed): {stats(self.group_latency)} over {len(self.group_latency)} groups\n"
-            f"Decoder busy {self.busy:.0%} of {self.audio:.0f} s of audio"
+            f"GPU busy decoding {self.busy:.0%} of the time ({self.compute:.0f} s for {self.audio:.0f} s of audio)"
         )
 
 
