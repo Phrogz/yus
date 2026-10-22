@@ -78,18 +78,16 @@ def test_multi_word_mondegreen_becomes_one_word(replacements: tr.Replacements) -
 @pytest.mark.parametrize(
     ("spoken", "expected"),
     [
-        ([" Close", " crop"], ["Ben Kishter"]),
-        ([" SHORT", " CROWN!"], ["Ben Kishter!"]),
-        ([" the", " kid"], ["Serayan Knappe-Butler"]),
+        ([" Takaya"], ["Kaia Mann"]),
+        ([" FEATHER", " BRUSH!"], ["Adam Federbusch!"]),
         ([" Steven", " Butler,"], ["Stephen Butler,"]),
         ([" scooper"], ["scoober"]),
         ([" Feather", " bush"], ["Adam Federbusch"]),  # longest match first: not "Feather" + replaced "bush"
         ([" bush"], ["Adam Federbusch"]),
-        ([" the", " kids"], ["the", "kids"]),
+        ([" feather", " brushes"], ["feather", "brushes"]),
         # mishearings learned from the 2025-01-14 20:30 game's audio
         ([" Flick", " to", " Kaya."], ["Flick", "to", "Kaia Mann."]),
         ([" Steven", " picks"], ["Stephen Butler", "picks"]),
-        ([" Kidd", " flicks"], ["Serayan Knappe-Butler", "flicks"]),
         ([" Fetterbush"], ["Adam Federbusch"]),
         ([" Scuba", " to"], ["scoober", "to"]),
         ([" Flick", " -hawk"], ["Flick", "-huck"]),
@@ -106,16 +104,16 @@ def test_mondegreen_phrases(replacements: tr.Replacements, spoken: list[str], ex
 @pytest.mark.parametrize(
     ("spoken", "expected"),
     [
-        ([" the.", " Kid"], ["the.", "Kid"]),
-        ([" close,", " crop"], ["close,", "crop"]),
+        ([" feather.", " brush"], ["feather.", "brush"]),
+        ([" feather,", " brush"], ["feather,", "brush"]),
         ([" Steven;", " Butler"], ["Stephen Butler;", "Butler"]),  # not "steven butler", but "steven" alone still matches
         ([" feather?", " bush"], ["feather?", "Adam Federbusch"]),  # not "feather bush", but "bush" alone still matches
-        ([" close…", " crop"], ["close…", "crop"]),
-        ([" close—", " crop"], ["close—", "crop"]),
-        ([" close-", " crop"], ["close-", "crop"]),
-        ([" close)", " crop"], ["close)", "crop"]),
-        ([' close"', " crop"], ['close"', "crop"]),
-        ([" Close", " crop."], ["Ben Kishter."]),  # punctuation after the last word is fine
+        ([" feather…", " brush"], ["feather…", "brush"]),
+        ([" feather—", " brush"], ["feather—", "brush"]),
+        ([" feather-", " brush"], ["feather-", "brush"]),
+        ([" feather)", " brush"], ["feather)", "brush"]),
+        ([' feather"', " brush"], ['feather"', "brush"]),
+        ([" Feather", " brush."], ["Adam Federbusch."]),  # punctuation after the last word is fine
     ],
 )
 def test_mondegreen_phrases_do_not_cross_punctuation(replacements: tr.Replacements, spoken: list[str], expected: list[str]) -> None:
@@ -144,13 +142,13 @@ def test_no_replacements_leaves_words(replacements: tr.Replacements) -> None:
 def test_segment_text_fallback_without_word_timings(replacements: tr.Replacements) -> None:
     fired: Counter[tuple[str, str]] = Counter()
     segs = [
-        SimpleNamespace(start=5.0, end=7.0, text=" Dump to close crop.", avg_logprob=-0.3, words=None),
-        SimpleNamespace(start=8.0, end=9.0, text=" Close, crop. The kid!", avg_logprob=-0.3, words=None),
+        SimpleNamespace(start=5.0, end=7.0, text=" Dump to feather brush.", avg_logprob=-0.3, words=None),
+        SimpleNamespace(start=8.0, end=9.0, text=" Feather, brush. Steven Butler!", avg_logprob=-0.3, words=None),
     ]
     groups = transcribe_words(segs, replacements, fired)
-    assert [texts(g) for g in groups] == [["Dump to Ben Kishter."], ["Close, crop. Serayan Knappe-Butler!"]]
+    assert [texts(g) for g in groups] == [["Dump to Adam Federbusch."], ["Feather, brush. Stephen Butler!"]]
     assert groups[0][0].duration == dt.timedelta(seconds=2)
-    assert fired == Counter({("close crop", "Ben Kishter"): 1, ("the kid", "Serayan Knappe-Butler"): 1})
+    assert fired == Counter({("feather brush", "Adam Federbusch"): 1, ("steven butler", "Stephen Butler"): 1})
 
 
 def test_bad_team_file_is_an_error(tmp_path: pathlib.Path) -> None:

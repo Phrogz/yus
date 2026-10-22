@@ -159,7 +159,9 @@ A team JSON file describes one team and its players. Here's the basic structure:
    - `mondegreens` (array) - Common ASR mistakes (mondegreens) that should be corrected to the official name.
      A mondegreen may be several words ("feather brush"); matching ignores case and punctuation, and the matched words
      become one word with the official name (keeping trailing punctuation, e.g. "feather brush," becomes "Adam Federbusch,").
-     Put descriptors you really say (e.g. "close crop") in `nicknames` if the transcript should keep them as said.
+     Only list true mishearings that any commentator would trigger. A description one commentator happens to use
+     ("the kid", "red shorts") is not a mondegreen or a nickname: leave it out of team files; mapping such descriptions
+     to players is a later, per-game step.
 
 **Empty arrays** (`[]`) are fine for players with no nicknames or mondegreens - it still helps the ASR know that name exists.
 
@@ -177,8 +179,6 @@ A team JSON file describes one team and its players. Here's the basic structure:
 - **Use both teams** - Specify team files for both teams playing: `--team team1.json --team team2.json`
 - **Include jersey numbers** - If you reference players by number, add those as nicknames:
   `"Matt Whitlock": ["Pikachu", "14"]`
-- **Physical descriptions** - If you don't know everyone's name yet, use distinctive features as
-  temporary "nicknames": `"Unknown Player": ["red shorts", "tall guy"]`
 - **Lower case in mondegreen** - The correction is case-insensitive, so you can use lowercase for mondegreens
 - **Full names** - List players by full name; the prompt lists each full name once (not first and last names separately)
   to leave room for more players and terms

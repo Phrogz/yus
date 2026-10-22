@@ -55,4 +55,4 @@ def test_team_files_validate(path: pathlib.Path):
 
 def test_team_files_reject_unknown_keys():
     with pytest.raises(pydantic.ValidationError):
-        yus.Team.model_validate({"names": ["white"], "players": {"Collin Ruprecht": {"mondegreen": ["naked"]}}})
+        yus.Team.model_validate({"names": ["white"], "players": {"Kaia Mann": {"mondegreen": ["takaya"]}}})
