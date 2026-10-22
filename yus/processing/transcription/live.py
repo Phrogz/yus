@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import pathlib
 import statistics
 import sys
@@ -72,14 +73,23 @@ def _key(word: TimedWord) -> str:
 def is_hallucination(segment: Segment) -> bool:
     """True for a segment Whisper probably invented: from a decode that failed Whisper's confidence or compression check, with most words
     squeezed into no time (Whisper could not place them in the audio), a stock subtitle phrase, or the prompt echoed back."""
-    logprob, compression = float(segment.get("avg_logprob") or 0.0), float(segment.get("compression_ratio") or 0.0)
-    if not (logprob >= LOW_LOGPROB and compression <= HIGH_COMPRESSION):  # NaN fails too: mlx gives a lone "!" a NaN logprob
+    # mlx-whisper reports a NaN avg_logprob for about 1 decode in 6, most of them good; like Whisper's own check, NaN passes.
+    if float(segment.get("avg_logprob") or 0.0) < LOW_LOGPROB or float(segment.get("compression_ratio") or 0.0) > HIGH_COMPRESSION:
         return True
     words = segment.get("words") or []
     if 2 * sum(float(w["end"]) - float(w["start"]) < 0.005 for w in words) > len(words):
         return True
     text = " ".join(str(w["word"]) for w in words) or str(segment.get("text", ""))
     return " ".join(tr.phrase_key(text)) in HALLUCINATIONS or any(echo in text.lower() for echo in PROMPT_ECHOES)
+
+
+def segment_logprob(segment: Segment) -> float:
+    """The segment's avg_logprob or, when mlx-whisper reports NaN, the mean log probability of its words."""
+    logprob = float(segment.get("avg_logprob") or 0.0)
+    if math.isnan(logprob):
+        probs = [float(w.get("probability") or 0.0) for w in segment.get("words") or []]
+        return statistics.fmean(math.log(max(p, 1e-6)) for p in probs) if probs else LOW_LOGPROB
+    return logprob
 
 
 def strip_loops(words: list[TimedWord]) -> list[TimedWord]:
@@ -102,7 +112,7 @@ def hypothesis_words(segments: Sequence[Segment], offset: float) -> list[TimedWo
     for seg in segments:
         if is_hallucination(seg):
             continue
-        logprob = float(seg.get("avg_logprob") or 0.0)
+        logprob = segment_logprob(seg)
         for w in seg.get("words") or []:
             if tr.normalize_token(text := str(w["word"]).strip()):  # not just punctuation
                 words.append(TimedWord(text, offset + float(w["start"]), offset + float(w["end"]), float(w.get("probability") or 0.0), logprob))
@@ -339,14 +349,41 @@ class MlxWhisper:
 
         self.repo = tr.resolve_hf_repo_id(model, "mlx") or model
         self._transcribe = mlx_whisper.transcribe
-        self._count = tr.mlx_token_counter(ModelHolder.get_model(self.repo, mx.float16), language)  # mlx_whisper.transcribe reuses this cached model
+        self._model = ModelHolder.get_model(self.repo, mx.float16)  # mlx_whisper.transcribe reuses this cached model
+        self._count = tr.mlx_token_counter(self._model, language)
         self.options = {**DECODE_OPTIONS, "language": language, **options}
 
     def __call__(self, audio: np.ndarray, prompt: str | None) -> list[Segment]:
-        return list(self._transcribe(audio, path_or_hf_repo=self.repo, initial_prompt=prompt, verbose=None, **self.options)["segments"])
+        self._model.decode = OneWindow(self._model.decode)
+        try:
+            return list(self._transcribe(audio, path_or_hf_repo=self.repo, initial_prompt=prompt, verbose=None, **self.options)["segments"])
+        finally:
+            del self._model.decode  # back to the class's decode
 
     def count_tokens(self, text: str) -> int:
         return self._count(text)
+
+
+class OneWindow:
+    """Wrap mlx-whisper's model.decode for one transcribe() call so that only the first 30-second window is decoded.
+
+    When a decode ends with two timestamps, as it often does at the end of a live window, transcribe() decodes the audio after the last
+    timestamp again: a full encoder pass, usually over a fraction of a second of audio. On the measured game that was 1 decode in 9,
+    9% of decoding time, and replaying the decodes without those second passes gave the same transcript: the next decode hears that audio.
+    Later windows are reported as silence (transcribe() then skips them); temperature fallback still re-decodes the first window."""
+
+    def __init__(self, decode: Callable[[Any, Any], Any]) -> None:
+        self.decode = decode
+        self.first: Any = None
+
+    def __call__(self, mel: Any, options: Any) -> Any:
+        if self.first is None:
+            self.first = mel
+        if mel is self.first:
+            return self.decode(mel, options)
+        from mlx_whisper.decoding import DecodingResult  # type: ignore[import-not-found]
+
+        return DecodingResult(audio_features=None, language=options.language, avg_logprob=-math.inf, no_speech_prob=1.0, temperature=options.temperature, compression_ratio=0.0)
 
 
 class FasterWhisper:

@@ -2,6 +2,7 @@
 
 import datetime as dt
 import inspect
+import math
 import os
 import pathlib
 import random
@@ -227,6 +228,16 @@ def test_hypothesis_words_are_in_stream_time_without_punctuation_only_words() ->
     assert words == [live.TimedWord("Black", 101.0, 101.3, 0.9, -0.3), live.TimedWord("pulls.", 101.4, 101.8, 0.9, -0.3)]
 
 
+def test_a_nan_logprob_becomes_the_mean_log_probability_of_the_words() -> None:
+    seg = segment([("Black", 1.0, 1.3), ("pulls.", 1.4, 1.8)], avg_logprob=float("nan"))
+    seg["words"][1]["probability"] = 0.5
+    assert live.segment_logprob(seg) == pytest.approx((math.log(0.9) + math.log(0.5)) / 2)
+    assert live.segment_logprob({**seg, "words": []}) == live.LOW_LOGPROB
+    lt = transcriber(lambda audio, prompt: [segment(speak("black pulls", 0.5), 0.0, avg_logprob=float("nan"))] if float(audio[0]) == 0 else [])
+    run(lt, 3.0)
+    assert lt.transcript.groups[0].interpretations[0].confidence == pytest.approx(math.log(0.9))
+
+
 def test_decoding_loops_are_not_committed() -> None:
     def loop(call: int, words: Script, start: float, end: float) -> Script:
         return words + [w for w in speak("to kaia " * 6, 3.0, 0.2) if w[2] <= end]  # a loop decoded at 3-5.4 s
@@ -245,7 +256,7 @@ def test_decoding_loops_are_not_committed() -> None:
         (segment(speak("Thank you, Kaia.", 0.0)), False),  # more than the stock phrase
         (segment(speak("Players: Matt Whitlock (Pikachu), Kaia Mann", 0.0)), True),
         (segment(speak("flick to kaia", 0.0), avg_logprob=-1.4), True),  # failed Whisper's confidence check
-        (segment(speak("flick to kaia", 0.0), avg_logprob=float("nan")), True),
+        (segment(speak("flick to kaia", 0.0), avg_logprob=float("nan")), False),  # mlx-whisper's NaN, mostly on good decodes
         (segment(speak("flick to kaia", 0.0), no_speech_prob=0.9, avg_logprob=-0.4), False),  # confident speech in noise
         ({**segment(speak("to kaia to kaia", 0.0)), "compression_ratio": 4.1}, True),  # failed Whisper's compression check
         ({**segment(speak("to kaia to kaia", 0.0)), "compression_ratio": 3.0}, False),
@@ -451,6 +462,20 @@ def test_decode_options_match_backend_signatures() -> None:
 
     accepted = set(inspect.signature(mlx_whisper.transcribe).parameters) | set(inspect.signature(DecodingOptions).parameters)
     assert {*live.DECODE_OPTIONS, "language", "initial_prompt", "verbose", "path_or_hf_repo"} <= accepted
+
+
+def test_mlx_decodes_only_the_first_window_of_a_call() -> None:
+    pytest.importorskip("mlx_whisper", reason="mlx-whisper is only installed on Apple Silicon (uv sync --extra mlx)")
+    from mlx_whisper.decoding import DecodingOptions
+
+    decoded: list[str] = []
+    one = live.OneWindow(lambda mel, options: decoded.append(mel) or "result")
+    first, second = "mel 0-30 s", "mel 19.6-49.6 s"
+    options = DecodingOptions(language="en", temperature=0.0)
+    assert [one(first, options), one(first, options)] == ["result", "result"]  # temperature fallback re-decodes the first window
+    skipped = one(second, options)
+    assert decoded == [first, first]
+    assert skipped.no_speech_prob > 0.6 and skipped.avg_logprob < live.LOW_LOGPROB and not skipped.tokens  # transcribe() skips it as silence
 
 
 def test_cli_defaults() -> None:
