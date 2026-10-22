@@ -1,8 +1,11 @@
+import copy
+import dataclasses
 import datetime as dt
 import json
 import math
 import os
 import pathlib
+import pickle
 import threading
 import time
 import unicodedata
@@ -17,6 +20,7 @@ from yus.processing.event_extraction import extract_events
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
 from yus.processing.stats import compute_stats
 from yus.session import GameSession, GameSnapshot, replay
+from yus.sports import ultimate
 
 DATA = pathlib.Path(__file__).parent / "data"
 TRANSCRIPT = DATA / "gruindoor_20250114T2030-transcript.json"  # the hand-made transcript
@@ -67,6 +71,12 @@ def arrival(group: yus.TranscriptGroup) -> dt.datetime:
     return max(word.start + word.duration for word in group.words)
 
 
+def team_named(events: list[yus.Event], game: yus.Game) -> list[yus.Event]:
+    """The events with teams named by their first names, as official streams name them."""
+    first = {name: team.names[0] for team in game.teams for name in team.names}
+    return [event.model_copy(update={"team": first[event.team]}) if isinstance(event, ultimate.UltimateEvent) and event.team in first else event for event in events]
+
+
 def feed_in_turn(session: GameSession, streams: dict[str, list[yus.TranscriptGroup]], lag: dict[str, float] | None = None) -> list[GameSnapshot]:
     """Feed each commentator's groups in the order they arrive, each `lag` seconds late, advancing them to the group's end; a
     snapshot after each."""
@@ -88,8 +98,8 @@ def assert_settled_never_change(snapshots: list[GameSnapshot], final: GameSnapsh
         assert snap.official.events[:settled] == final.official.events[:settled], f"version {snap.version}"
 
 
-def assert_same_snapshot(a: GameSnapshot, b: GameSnapshot) -> None:
-    assert (a.version, a.settled_count, a.finished) == (b.version, b.settled_count, b.finished)
+def assert_same_snapshot(a: GameSnapshot, b: GameSnapshot, version: bool = True) -> None:
+    assert (a.settled_count, a.finished) == (b.settled_count, b.finished) and (a.version == b.version or not version)
     assert a.commentators == b.commentators and a.associations == b.associations and a.descriptions == b.descriptions
     assert a.official.events == b.official.events
     assert {name: s.events for name, s in a.raw.items()} == {name: s.events for name, s in b.raw.items()}
@@ -110,7 +120,8 @@ def test_replay_of_the_game_matches_the_batch_pipeline(game: yus.Game, transcrip
     raw = extract_events(transcript, game.teams, timeout=6.0)
     batch = resolver.resolve_stream(raw, "Gavin Kistner")
     expected = compute_stats(yus.EventStream(game=game, events=batch.events), game.teams, provisional_from=len(batch.events))
-    assert final.official.events == batch.events and final.settled_count == len(batch.events) == 200
+    assert final.resolved["Gavin Kistner"].events == batch.events and final.settled_count == len(batch.events) == 200
+    assert final.official.events == team_named(batch.events, game)  # teams by first name, as with several commentators
     for name, table in expected.tables().items():
         pd.testing.assert_frame_equal(final.stats.tables([name])[name], table)
 
@@ -140,6 +151,7 @@ def test_snapshot_reports_commentators_and_names(game: yus.Game, transcript: yus
     assert "Ben Kishter" not in snap.unmentioned[WHITE] and "Molly Lanning" in snap.unmentioned[BLACK]
     assert snap.provisional == snap.official.events[snap.settled_count :]
     assert snap.raw["Gavin Kistner"].events[0].player == "pikachu" and snap.resolved["Gavin Kistner"].events[0].player == "Matt Whitlock"
+    assert snap.resolved["Gavin Kistner"].events[0].team == "white" and {event.team for event in snap.official.events} == {WHITE, BLACK}
     assert [group.words for group in snap.transcripts["Gavin Kistner"]] == [group.words for group in transcript.groups[:60]]
     session.add_groups("Gavin Kistner", transcript.groups[60:61])
     assert len(snap.transcripts["Gavin Kistner"]) == 60 and len(session.snapshot().transcripts["Gavin Kistner"]) == 61
@@ -250,9 +262,9 @@ def test_save_and_load_reproduce_the_session(game: yus.Game, transcript: yus.Tra
         session.add_groups("B / Other", other.groups[half - 20 :])
         session.snapshot()
         session.finish()
-    assert_same_snapshot(loaded.snapshot(), original.snapshot())
+    assert_same_snapshot(loaded.snapshot(), original.snapshot(), version=False)  # versions after load() leap past any given out before
     loaded.save()
-    assert_same_snapshot(GameSession.load(tmp_path / "game").snapshot(), original.snapshot())
+    assert_same_snapshot(GameSession.load(tmp_path / "game").snapshot(), loaded.snapshot())
 
 
 def test_load_does_not_hear_identifications_again(game: yus.Game, tmp_path: pathlib.Path):
@@ -331,9 +343,9 @@ def test_snapshot_speed(game: yus.Game, transcript: yus.Transcript, descriptions
 
     session = GameSession(game, descriptions)
     started = time.perf_counter()
-    replay(session, transcript, "Gavin Kistner", on_update=lambda snap: snap.stats)
+    replay(session, transcript, "Gavin Kistner", on_update=lambda snap: (snap.stats, snap.unresolved, snap.unmentioned))
     with_stats = time.perf_counter() - started
-    assert with_stats < 6.0, f"{with_stats:.2f} s for {len(transcript.groups)} snapshots with their stats"  # about 1.8 s: compute_stats' DataFrames
+    assert with_stats < 3.0, f"{with_stats:.2f} s for {len(transcript.groups)} snapshots with their stats"  # about 1.7 s: compute_stats' DataFrames
 
 
 def test_replay_in_time_advances_through_silence(game: yus.Game):
@@ -367,7 +379,7 @@ def test_replay_of_a_saved_whisper_transcript(game: yus.Game, descriptions: Game
     snap = session.snapshot()
     transcript = yus.Transcript.model_validate_json(WHISPER.read_text())
     batch = PlayerResolver(game.teams, descriptions).resolve_stream(extract_events(transcript, game.teams, timeout=6.0), "whisper")
-    assert snap.official.events == batch.events and sum(snap.score.values()) >= 23
+    assert snap.official.events == team_named(batch.events, game) and sum(snap.score.values()) >= 23
 
 
 def guarded(errors: list[BaseException], work: Callable[[], None]) -> threading.Thread:
@@ -519,6 +531,72 @@ def test_add_groups_refuses_times_unlike_the_commentators(game: yus.Game, tmp_pa
     assert_same_snapshot(GameSession.load(tmp_path).snapshot(), session.snapshot())
 
 
+def test_load_without_session_json(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions, tmp_path: pathlib.Path):
+    other = other_commentator(transcript, 4.0, drop=6)
+    session = GameSession(game, descriptions, tmp_path)
+    session.add_commentator("Gavin Kistner")
+    session.add_commentator("B / Other")
+    session.add_groups("Gavin Kistner", transcript.groups[:50])
+    session.add_groups("B / Other", other.groups[:40])
+    session.save()
+    (tmp_path / "session.json").unlink()
+    loaded = GameSession.load(tmp_path)
+    assert loaded.commentators == ["B / Other", "Gavin Kistner"]  # file name order: B_Other.json, Gavin_Kistner.json
+    snap, saved = loaded.snapshot(), session.snapshot()
+    assert snap.transcripts.keys() == saved.transcripts.keys() and snap.descriptions == saved.descriptions
+    assert {name: s.events for name, s in snap.raw.items()} == {name: s.events for name, s in saved.raw.items()}
+
+
+def test_load_refuses_file_names_that_leave_the_directory(game: yus.Game, tmp_path: pathlib.Path):
+    session = GameSession(game, directory=tmp_path / "game")
+    session.add_commentator("A")
+    session.save()
+    path = tmp_path / "game" / "session.json"
+    data = json.loads(path.read_text())
+    data["commentators"][0]["file"] = "../../x"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="file name"):
+        GameSession.load(tmp_path / "game")
+
+
+def test_versions_after_load_are_new(game: yus.Game, transcript: yus.Transcript, tmp_path: pathlib.Path):
+    session = GameSession(game, directory=tmp_path)
+    session.add_commentator("A")
+    session.add_groups("A", transcript.groups[:10])
+    session.save()
+    saved = session.version
+    for group in transcript.groups[10:20]:  # changes that were never saved: then the server crashed
+        session.add_groups("A", [group])
+    loaded = GameSession.load(tmp_path)
+    assert loaded.version == saved
+    loaded.add_groups("A", transcript.groups[10:11])
+    assert loaded.version > session.version
+
+
+def test_unresolved_names_are_not_resolved_again(game: yus.Game):
+    lines = ((0, "picked up by red shorts for {}"), (3, "flick to pikachu"), (6, "backhand to red shorts"))
+    one, two = GameSession(game), GameSession(game)
+    for session, names in ((one, ["A"]), (two, ["A", "B"])):
+        for name, team in zip(names, ["white", "light"]):
+            session.add_commentator(name)
+            session.add_groups(name, spoken(*((seconds, text.format(team)) for seconds, text in lines)).groups)
+        session.describe("white", ["red shorts"], label="Kaia")  # an unknown player called Kaia: not Kaia Mann
+        snap = session.snapshot()
+        assert [event.player for event in snap.official.events] == ["Kaia", "Matt Whitlock"] and snap.official.events[1].receiver == "Kaia"
+        assert snap.unresolved == [(WHITE, "Kaia", 2)] and "Kaia Mann" in snap.unmentioned[WHITE]
+
+
+def test_snapshots_can_be_copied_and_pickled(game: yus.Game, transcript: yus.Transcript):
+    session = GameSession(game)
+    replay(session, transcript.model_copy(update={"groups": transcript.groups[:40]}), "A")
+    snap = session.snapshot()
+    snap.stats
+    for copied in (copy.deepcopy(snap), pickle.loads(pickle.dumps(snap))):
+        assert copied.official.events == snap.official.events and copied.score == snap.score and copied.unresolved == snap.unresolved
+    fields = dataclasses.asdict(snap)
+    assert fields["settled_count"] == snap.settled_count and fields["official"].events == snap.official.events and "views" not in fields
+
+
 @pytest.mark.parametrize("speed, tick", [(-1.0, 1.0), (math.nan, 1.0), (1.0, 0.0)])
 def test_replay_refuses_a_bad_speed_or_tick(game: yus.Game, speed: float, tick: float):
     with pytest.raises(ValueError):
@@ -548,6 +626,7 @@ def test_live_transcription_of_the_real_audio_feeds_a_session(game: yus.Game, de
     def on_groups(groups: list[yus.TranscriptGroup], now: float) -> None:
         nonlocal slowest
         session.add_groups("Gavin Kistner", groups)
+        session.advance(transcriber.horizon, "Gavin Kistner")
         session.set_pending_text("Gavin Kistner", transcriber.pending_text)
         started = time.perf_counter()
         session.snapshot().stats

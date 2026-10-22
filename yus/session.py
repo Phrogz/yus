@@ -12,6 +12,7 @@ See docs/session.md.
 
 from __future__ import annotations
 
+import collections
 import copy
 import dataclasses
 import datetime as dt
@@ -32,7 +33,9 @@ import pydantic
 import yus
 from yus.processing.event_extraction import EventExtractor
 from yus.processing.event_unification import GameDescriptions, LiveMerger, MergeResult, PlayerDescription, PlayerResolver
+from yus.processing.event_unification.players import mentions, normalize
 from yus.processing.stats import GameStats, compute_stats
+from yus.sports import ultimate
 
 TIMEOUT = 6.0  # seconds without words after which an open throw becomes final (EventExtractor's timeout)
 SETTLE = 20.0  # seconds one commentator may lag another before settling waits longer (merge_streams's default `settle`)
@@ -61,8 +64,8 @@ class HeardAssociation(pydantic.BaseModel):
 class _Views:
     """What a snapshot computes when first read, shared by the snapshots of one computation (stats take about 10 ms)."""
 
-    def __init__(self, official: yus.EventStream, teams: list[yus.Team], settled: int, resolver: PlayerResolver, commentator: str | None):
-        self.official, self.teams, self.settled, self.resolver, self.commentator = official, teams, settled, resolver, commentator
+    def __init__(self, official: yus.EventStream, teams: list[yus.Team], settled: int, resolver: PlayerResolver):
+        self.official, self.teams, self.settled, self.resolver = official, teams, settled, resolver
         self._lock = threading.Lock()
         self._values: dict[str, Any] = {}
 
@@ -72,6 +75,14 @@ class _Views:
                 self._values[key] = compute()
             return self._values[key]
 
+    def __getstate__(self) -> dict[str, Any]:  # copy.deepcopy and pickle: a lock can't be copied
+        with self._lock:
+            return {key: value for key, value in self.__dict__.items() if key != "_lock"} | {"_values": dict(self._values)}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+
 
 @dataclasses.dataclass(eq=False)
 class GameSnapshot:
@@ -79,7 +90,8 @@ class GameSnapshot:
 
     `official.events[:settled_count]` are final as far as the commentary goes; later ones are provisional and may change or go.
     A description (`describe()`, or one a commentator speaks) re-resolves names in every event, settled or not.
-    `stats`, `score`, `summary`, `unresolved` and `unmentioned` are computed when first read, then kept.
+    `stats`, `score`, `summary`, `unresolved` and `unmentioned` are computed when first read, then kept. A snapshot can be
+    deep-copied and pickled; `dataclasses.asdict` gives its fields (not the computed ones).
     """
 
     version: int
@@ -88,13 +100,16 @@ class GameSnapshot:
     transcripts: dict[str, list[yus.TranscriptGroup]]  # per commentator: the groups received
     raw: dict[str, yus.EventStream]  # per commentator: events as extracted, names as spoken; final ones first
     resolved: dict[str, yus.EventStream]  # per commentator: the raw events with names resolved by PlayerResolver
-    official: yus.EventStream  # one commentator: its resolved stream; several: the merged stream
+    official: yus.EventStream  # one commentator: its resolved stream; several: the merged stream. Teams by their first names
     settled_count: int
     associations: list[HeardAssociation]
     descriptions: GameDescriptions  # every description in effect: given, described, and heard
     merge: MergeResult | None  # with several commentators: offsets, pairs, conflicts, name links
     finished: bool
-    _views: _Views = dataclasses.field(repr=False)
+    views: dataclasses.InitVar[_Views]
+
+    def __post_init__(self, views: _Views) -> None:
+        self._views = views
 
     @property
     def stats(self) -> GameStats:
@@ -114,15 +129,16 @@ class GameSnapshot:
 
     @property
     def unresolved(self) -> list[tuple[str, str, int]]:
-        """(team, name, mentions) for each name in the official stream that still needs a person to identify it (PlayerResolver.unresolved)."""
+        """(team, name, mentions) for each name in the official stream that still needs a person to identify it: names that are
+        not roster players (labels of unknown players, and names nobody described), most mentioned first, as PlayerResolver.unresolved."""
         views = self._views
-        return views.get("unresolved", lambda: views.resolver.unresolved(views.official, views.commentator))
+        return views.get("unresolved", lambda: _unresolved(views.official, views.resolver))
 
     @property
     def unmentioned(self) -> dict[str, list[str]]:
         """Roster players no official event names, per team: likely identities for the unresolved names."""
         views = self._views
-        return views.get("unmentioned", lambda: views.resolver.unmentioned_players(views.official, views.commentator))
+        return views.get("unmentioned", lambda: _unmentioned(views.official, views.resolver))
 
     @property
     def provisional(self) -> list[yus.Event]:
@@ -144,6 +160,7 @@ class _Commentator:
     heard: int = 0  # associations of the extractor already recorded
     resolver: PlayerResolver | None = None  # what `resolved` was resolved with
     resolved: list[yus.Event] = dataclasses.field(default_factory=list)  # the final raw events, resolved
+    named: list[yus.Event] = dataclasses.field(default_factory=list)  # the same with teams by first name: a lone commentator's official events
 
     def awareness(self) -> bool | None:
         """Whether this commentator's times carry a UTC offset: as their words, else as their last advance(); None if unknown."""
@@ -228,6 +245,7 @@ class GameSession:
         self._merger_before: list[list[tuple[int, float]] | None] | None = None  # its segments as the last merge started
         self._finished = False
         self._version = 0
+        self._floor = 0  # the least version the next change may take (load() sets it past any version given out before)
         self._data_version = 0
         self._computed: _Computed | None = None
         self._snapshot: GameSnapshot | None = None
@@ -236,7 +254,7 @@ class GameSession:
 
     @property
     def version(self) -> int:
-        """Increases on every change."""
+        """Increases on every change, also across save() and load()."""
         return self._version
 
     @property
@@ -375,7 +393,7 @@ class GameSession:
                 descriptions=done.descriptions,
                 merge=done.merge,
                 finished=self._finished,
-                _views=done.views,
+                views=done.views,
             )
             return self._snapshot
 
@@ -393,14 +411,17 @@ class GameSession:
         official, settled, merge = self._official(list(resolved.values()), finals)
         if self._finished:
             settled = len(official.events)
-        single = next(iter(self._commentators)) if len(self._commentators) == 1 else None
-        views = _Views(official, self.game.teams, settled, self._resolver, single)
+        before = self._computed
+        if before is not None and before.settled == settled and before.official.events == official.events:
+            official, views = before.official, before.views  # nothing shown changed: keep the stats
+        else:
+            views = _Views(official, self.game.teams, settled, self._resolver)
         return _Computed(self._data_version, transcripts, raw, resolved, official, settled, merge, list(self._associations), self._resolver.descriptions, views)
 
     def _resolve(self, c: _Commentator, events: list[yus.Event], final: int) -> list[yus.Event]:
         """The commentator's raw events resolved: final ones once (until a description changes), provisional ones every time."""
         if c.resolver is not self._resolver:
-            c.resolver, c.resolved = self._resolver, []
+            c.resolver, c.resolved, c.named = self._resolver, [], []
         c.resolved += [self._resolver.resolve_event(event, c.name) for event in events[len(c.resolved) : final]]
         return c.resolved + [self._resolver.resolve_event(event, c.name) for event in events[final:]]
 
@@ -409,11 +430,20 @@ class GameSession:
         if not streams:
             return yus.EventStream(game=self.game), 0, None
         if self._merger is None:
-            return streams[0], finals[0], None
+            (c,), final = self._commentators.values(), finals[0]
+            c.named += [self._team_named(event) for event in c.resolved[len(c.named) :]]
+            return yus.EventStream(game=self.game, events=c.named + [self._team_named(event) for event in streams[0].events[final:]]), final, None
         self._merger_before = copy.deepcopy(self._merger.segments)
         self._merger.options["settle"] = self._settle(streams, finals)
         merge = self._merger.merge(streams)
         return merge.stream, _settled(merge, finals), merge
+
+    def _team_named(self, event: yus.Event) -> yus.Event:
+        """The event with its team named by the team's first name, as merged events are."""
+        index = self._resolver.team_index(event.team) if isinstance(event, ultimate.UltimateEvent) else None
+        if index is None or (name := self.game.teams[index].names[0]) == event.team:
+            return event
+        return event.model_copy(update={"team": name})
 
     def _settle(self, streams: list[yus.EventStream], finals: list[int]) -> float:
         """LiveMerger's `settle` for the next merge: the seconds it takes events still to come to be at most before its latest
@@ -467,19 +497,23 @@ class GameSession:
 
     @classmethod
     def load(cls, directory: pathlib.Path | str) -> GameSession:
-        """The session saved in `directory`, as it was: transcripts are fed again (events/ and official.json are not read back)."""
+        """The session saved in `directory`, as it was: transcripts are fed again (events/ and official.json are not read back).
+        Without session.json, each transcripts/*.json is a commentator (its `commentator`, else the file name), in file name order."""
         directory = pathlib.Path(directory)
         game = yus.Game.model_validate_json((directory / "game.json").read_text())
         path = directory / "descriptions.json"
         descriptions = GameDescriptions.model_validate_json(path.read_text()) if path.exists() else None
-        saved = _SavedSession.model_validate_json((directory / "session.json").read_text())
+        saved, transcripts = _read_saved(directory)
         session = cls(game, descriptions, directory, timeout=saved.timeout)
         session._associations = list(saved.associations)
         for entry in saved.commentators:
+            if _stem(entry.file) != entry.file or not entry.file:
+                raise ValueError(f"Not a file name made by save(): {entry.file!r} ({directory / 'session.json'})")
             session.add_commentator(entry.name, entry.focus_team)
             c = session._commentators[entry.name]
             c.file, c.pending_text, c.heard = entry.file, entry.pending_text, sum(a.commentator == entry.name for a in saved.associations)
-            transcript = yus.Transcript.model_validate_json((directory / "transcripts" / f"{entry.file}.json").read_text())
+            path = directory / "transcripts" / f"{entry.file}.json"
+            transcript = transcripts[entry.file] if entry.file in transcripts else yus.Transcript.model_validate_json(path.read_text())
             _awareness(transcript.groups, None, entry.name)
             for group in transcript.groups:
                 session._feed(c, group)
@@ -493,7 +527,9 @@ class GameSession:
             session._finished = True
         if session._merger is not None and saved.merger_segments is not None:
             session._merger.segments = [list(segments) if segments is not None else None for segments in saved.merger_segments]
-        session._version = saved.version + (len(session._associations) > len(saved.associations))  # heard more: an extractor changed
+        session._version, session._floor = saved.version, time.time_ns() // 1000  # past any version given out before, saved or not
+        if len(session._associations) > len(saved.associations):
+            session._changed(data=True)  # heard more: an extractor changed
         session.snapshot()  # merge now, so that the merger goes on from where it was
         return session
 
@@ -509,7 +545,7 @@ class GameSession:
             raise RuntimeError("The session is finished")
 
     def _changed(self, data: bool) -> None:
-        self._version += 1
+        self._version, self._floor = max(self._version + 1, self._floor), 0
         if data:
             self._data_version += 1
 
@@ -565,6 +601,25 @@ def _settled(merge: MergeResult, finals: list[int]) -> int:
     return merge.settled
 
 
+def _unresolved(stream: yus.EventStream, resolver: PlayerResolver) -> list[tuple[str, str, int]]:
+    """PlayerResolver.unresolved of a stream whose names are resolved already. Resolving them again could take a label for a
+    roster player (an unknown player labelled "Kaia" for Kaia Mann)."""
+    forms: dict[tuple[int, str], collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    for team, name in mentions(stream):
+        index = resolver.team_index(team)
+        if index is not None and name not in resolver.teams[index].players:
+            forms[(index, normalize(name))][name] += 1
+    found = [(resolver.teams[index].names[0], counts.most_common(1)[0][0], counts.total()) for (index, _), counts in forms.items()]
+    return sorted(found, key=lambda item: -item[2])
+
+
+def _unmentioned(stream: yus.EventStream, resolver: PlayerResolver) -> dict[str, list[str]]:
+    """PlayerResolver.unmentioned_players of a stream whose names are resolved already."""
+    mentioned = {(resolver.team_index(team), name) for team, name in mentions(stream)}
+    teams = resolver.teams
+    return {team.names[0] if team.names else f"team {i + 1}": [player for player in team.players if (i, player) not in mentioned] for i, team in enumerate(teams)}
+
+
 def _stem(name: str) -> str:
     """A file name stem for a commentator's name: "B / Other" -> "B_Other"."""
     return re.sub(r"[^\w.-]+", "_", unicodedata.normalize("NFC", name)).strip("._")
@@ -601,6 +656,16 @@ def _clock(times: list[dt.datetime], zone: dt.tzinfo | None) -> Callable[[dt.dat
     """A function that makes these times comparable: as they are, unless some carry a UTC offset and some don't (then all naive)."""
     aware = {when.utcoffset() is not None for when in times}
     return (lambda when: when) if len(aware) < 2 else (lambda when: _as(when, False, zone))
+
+
+def _read_saved(directory: pathlib.Path) -> tuple[_SavedSession, dict[str, yus.Transcript]]:
+    """session.json, or what the transcripts say without it, and the transcripts read for that (by file name stem)."""
+    path = directory / "session.json"
+    if path.exists():
+        return _SavedSession.model_validate_json(path.read_text()), {}
+    transcripts = {file.stem: yus.Transcript.model_validate_json(file.read_text()) for file in sorted((directory / "transcripts").glob("*.json"))}
+    commentators = [_SavedCommentator(name=transcript.commentator or stem, file=stem) for stem, transcript in transcripts.items()]
+    return _SavedSession(version=0, timeout=TIMEOUT, commentators=commentators), transcripts
 
 
 def _write_json(path: pathlib.Path, data: object) -> None:
