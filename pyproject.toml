@@ -23,6 +23,10 @@ mlx = ["mlx-whisper>=0.4.2; sys_platform == 'darwin' and platform_machine == 'ar
 
 [project.scripts]
 yus-transcribe = "yus.processing.transcription.transcribe:main"
+yus-live-transcribe = "yus.processing.transcription.live:main"
+yus-events = "yus.processing.event_extraction.cli:main"
+yus-score = "yus.processing.evaluation:main"
+yus-stats = "yus.processing.stats.cli:main"
 
 [tool.uv]
 package = true
