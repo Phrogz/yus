@@ -81,6 +81,7 @@ class GameSnapshot:
     version: int
     game: yus.Game
     commentators: list[CommentatorState]
+    transcripts: dict[str, list[yus.TranscriptGroup]]  # per commentator: the groups received
     raw: dict[str, yus.EventStream]  # per commentator: events as extracted, names as spoken; final ones first
     resolved: dict[str, yus.EventStream]  # per commentator: the raw events with names resolved by PlayerResolver
     official: yus.EventStream  # one commentator: its resolved stream; several: the merged stream
@@ -142,6 +143,7 @@ class _Commentator:
 @dataclasses.dataclass(eq=False)
 class _Computed:
     data_version: int
+    transcripts: dict[str, list[yus.TranscriptGroup]]
     raw: dict[str, yus.EventStream]
     resolved: dict[str, yus.EventStream]
     official: yus.EventStream
@@ -324,6 +326,7 @@ class GameSession:
                 version=self._version,
                 game=self.game,
                 commentators=commentators,
+                transcripts=done.transcripts,
                 raw=done.raw,
                 resolved=done.resolved,
                 official=done.official,
@@ -337,6 +340,7 @@ class GameSession:
             return self._snapshot
 
     def _compute(self) -> _Computed:
+        transcripts: dict[str, list[yus.TranscriptGroup]] = {}
         raw: dict[str, yus.EventStream] = {}
         resolved: dict[str, yus.EventStream] = {}
         finals = []
@@ -347,8 +351,9 @@ class GameSession:
                 c.resolver, c.resolved = self._resolver, []
             c.resolved += [self._resolver.resolve_event(event, c.name) for event in events[len(c.resolved) : final]]
             resolved_events = c.resolved[:final] + [self._resolver.resolve_event(event, c.name) for event in events[final:]]
-            raw[c.name] = yus.EventStream(game=self.game, transcript=c.transcript, events=events)
-            resolved[c.name] = yus.EventStream(game=self.game, transcript=c.transcript, events=resolved_events)
+            transcripts[c.name] = list(c.transcript.groups)
+            raw[c.name] = yus.EventStream(game=self.game, events=events)
+            resolved[c.name] = yus.EventStream(game=self.game, events=resolved_events)
             finals.append(final)
         merge = None
         if not self._commentators:
@@ -363,7 +368,7 @@ class GameSession:
             settled = len(official.events)
         single = next(iter(self._commentators)) if len(self._commentators) == 1 else None
         views = _Views(official, self.game.teams, settled, self._resolver, single)
-        return _Computed(self._data_version, raw, resolved, official, settled, merge, list(self._associations), self._resolver.descriptions, views)
+        return _Computed(self._data_version, transcripts, raw, resolved, official, settled, merge, list(self._associations), self._resolver.descriptions, views)
 
     # ------------------------------------------------------------------ persistence
 
@@ -420,7 +425,7 @@ class GameSession:
             session._finished = True
         if session._merger is not None and saved.merger_segments is not None:
             session._merger.segments = [list(segments) if segments is not None else None for segments in saved.merger_segments]
-        session._version = saved.version
+        session._version = saved.version + (len(session._associations) > len(saved.associations))  # heard more: an extractor changed
         session.snapshot()  # merge now, so that the merger goes on from where it was
         return session
 

@@ -43,6 +43,7 @@ replay(session, transcript_or_json_path, "Gavin", speed=0, on_update=None)   # -
 |---|---|
 | `version`, `game`, `finished` | |
 | `commentators` | `CommentatorState`: `name`, `focus_team`, `groups` (count), `final_count` (raw events final), `pending_text` |
+| `transcripts` | per commentator name: the `TranscriptGroup`s received |
 | `raw`, `resolved` | per commentator name: `EventStream`, final events first. `raw` keeps names as spoken |
 | `official` | one commentator: its resolved stream; several: the merged stream (teams by first name) |
 | `settled_count`, `provisional` | `official.events[:settled_count]` are final; `provisional` lists the rest |
@@ -60,7 +61,7 @@ replay(session, transcript_or_json_path, "Gavin", speed=0, on_update=None)   # -
   - Several: it is the merge's `settled`, cut before the first merged event that contains a provisional raw event.
   - After `finish()`: every event is settled.
   - Settled events never change as commentary arrives. A description does change them: `describe()` and spoken
-    identifications re-resolve the names of every event, settled or not.
+    identifications re-resolve the names of every event, settled or not (and, with several commentators, may change how events pair).
 - **Spoken identifications.** The extractor finds identifications like "oh, red shorts is kaia". Each one is recorded at once
   as a description for that commentator's stream: `PlayerDescription(team, [description], player, commentator=...)`.
   - A commentator's own record beats shared ones. To correct a heard identification, `describe()` the same description

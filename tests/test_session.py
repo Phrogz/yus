@@ -124,6 +124,9 @@ def test_snapshot_reports_commentators_and_names(game: yus.Game, transcript: yus
     assert "Ben Kishter" not in snap.unmentioned[WHITE] and "Molly Lanning" in snap.unmentioned[BLACK]
     assert snap.provisional == snap.official.events[snap.settled_count :]
     assert snap.raw["Gavin Kistner"].events[0].player == "pikachu" and snap.resolved["Gavin Kistner"].events[0].player == "Matt Whitlock"
+    assert [group.words for group in snap.transcripts["Gavin Kistner"]] == [group.words for group in transcript.groups[:60]]
+    session.add_groups("Gavin Kistner", transcript.groups[60:61])
+    assert len(snap.transcripts["Gavin Kistner"]) == 60 and len(session.snapshot().transcripts["Gavin Kistner"]) == 61
 
 
 def test_describe_mid_game_fixes_earlier_events(game: yus.Game, transcript: yus.Transcript):
@@ -239,6 +242,17 @@ def test_save_and_load_reproduce_the_session(game: yus.Game, transcript: yus.Tra
     assert_same_snapshot(loaded.snapshot(), original.snapshot())
     loaded.save()
     assert_same_snapshot(GameSession.load(tmp_path / "game").snapshot(), original.snapshot())
+
+
+def test_load_does_not_hear_identifications_again(game: yus.Game, tmp_path: pathlib.Path):
+    session = GameSession(game, directory=tmp_path)
+    session.add_commentator("A")
+    session.add_groups("A", spoken((0, "picked up by red shorts for white"), (3, "flick to pikachu"), (6, "oh, red shorts is kaia")).groups)
+    session.describe("white", ["red shorts"], player="Emily Kraus", commentator="A")  # corrects what was heard
+    session.save()
+    loaded = GameSession.load(tmp_path)
+    assert_same_snapshot(loaded.snapshot(), session.snapshot())
+    assert loaded.snapshot().official.events[0].player == "Emily Kraus" and len(loaded.descriptions.players) == 2
 
 
 def test_version_increases_on_every_change(game: yus.Game, transcript: yus.Transcript):
