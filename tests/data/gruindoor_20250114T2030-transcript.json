@@ -44,31 +44,31 @@
             {
               "text": "tristan",
               "confidence": 0.672,
-              "start": "2025-01-14T20:30:50.450000",
+              "start": "2025-01-14T20:30:51.900000",
               "duration": "PT0.6S"
             },
             {
               "text": "glasses",
               "confidence": 0.714,
-              "start": "2025-01-14T20:30:51.050000",
+              "start": "2025-01-14T20:30:53",
               "duration": "PT0.6S"
             },
             {
               "text": "and",
               "confidence": 0.435,
-              "start": "2025-01-14T20:30:51.650000",
+              "start": "2025-01-14T20:30:53.900000",
               "duration": "PT0.3S"
             },
             {
               "text": "short",
               "confidence": 0.758,
-              "start": "2025-01-14T20:30:51.950000",
+              "start": "2025-01-14T20:30:54.200000",
               "duration": "PT0.3S"
             },
             {
               "text": "crop",
               "confidence": 0.833,
-              "start": "2025-01-14T20:30:52.250000",
+              "start": "2025-01-14T20:30:54.500000",
               "duration": "PT0.3S"
             }
           ],
@@ -191,25 +191,25 @@
             {
               "text": "backhand",
               "confidence": 0.646,
-              "start": "2025-01-14T20:31:22.800000",
+              "start": "2025-01-14T20:31:24.800000",
               "duration": "PT0.6S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:31:23.400000",
+              "start": "2025-01-14T20:31:25.400000",
               "duration": "PT0.3S"
             },
             {
               "text": "close",
               "confidence": 0.608,
-              "start": "2025-01-14T20:31:23.700000",
+              "start": "2025-01-14T20:31:25.700000",
               "duration": "PT0.3S"
             },
             {
               "text": "crop",
               "confidence": 0.833,
-              "start": "2025-01-14T20:31:24",
+              "start": "2025-01-14T20:31:26",
               "duration": "PT0.3S"
             }
           ],
@@ -257,25 +257,25 @@
             {
               "text": "backhand",
               "confidence": 0.646,
-              "start": "2025-01-14T20:31:30.100000",
+              "start": "2025-01-14T20:31:31.800000",
               "duration": "PT0.6S"
             },
             {
               "text": "swing",
               "confidence": 0.769,
-              "start": "2025-01-14T20:31:30.700000",
+              "start": "2025-01-14T20:31:32.400000",
               "duration": "PT0.3S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:31:31",
+              "start": "2025-01-14T20:31:32.700000",
               "duration": "PT0.3S"
             },
             {
               "text": "glasses",
               "confidence": 0.714,
-              "start": "2025-01-14T20:31:31.300000",
+              "start": "2025-01-14T20:31:33",
               "duration": "PT0.6S"
             }
           ],
@@ -290,49 +290,49 @@
             {
               "text": "flick",
               "confidence": 0.712,
-              "start": "2025-01-14T20:31:33",
+              "start": "2025-01-14T20:31:36.500000",
               "duration": "PT0.3S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:31:33.300000",
+              "start": "2025-01-14T20:31:36.800000",
               "duration": "PT0.3S"
             },
             {
               "text": "kaia",
               "confidence": 0.592,
-              "start": "2025-01-14T20:31:33.600000",
+              "start": "2025-01-14T20:31:37.100000",
               "duration": "PT0.75S"
             },
             {
               "text": "deed",
               "confidence": 0.841,
-              "start": "2025-01-14T20:31:34.350000",
+              "start": "2025-01-14T20:31:37.850000",
               "duration": "PT0.3S"
             },
             {
               "text": "by",
               "confidence": 0.883,
-              "start": "2025-01-14T20:31:34.650000",
+              "start": "2025-01-14T20:31:38.850000",
               "duration": "PT0.3S"
             },
             {
               "text": "somebody",
               "confidence": 0.796,
-              "start": "2025-01-14T20:31:34.950000",
+              "start": "2025-01-14T20:31:39.150000",
               "duration": "PT0.9S"
             },
             {
               "text": "on",
               "confidence": 0.478,
-              "start": "2025-01-14T20:31:35.850000",
+              "start": "2025-01-14T20:31:40.050000",
               "duration": "PT0.3S"
             },
             {
               "text": "dark",
               "confidence": 0.865,
-              "start": "2025-01-14T20:31:36.150000",
+              "start": "2025-01-14T20:31:40.350000",
               "duration": "PT0.3S"
             }
           ],
@@ -431,25 +431,25 @@
             {
               "text": "backhand",
               "confidence": 0.646,
-              "start": "2025-01-14T20:31:47",
+              "start": "2025-01-14T20:31:48.450000",
               "duration": "PT0.6S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:31:47.600000",
+              "start": "2025-01-14T20:31:51.500000",
               "duration": "PT0.3S"
             },
             {
               "text": "yellow",
               "confidence": 0.789,
-              "start": "2025-01-14T20:31:47.900000",
+              "start": "2025-01-14T20:31:51.800000",
               "duration": "PT0.6S"
             },
             {
               "text": "border",
               "confidence": 0.93,
-              "start": "2025-01-14T20:31:48.500000",
+              "start": "2025-01-14T20:31:52.400000",
               "duration": "PT0.6S"
             }
           ],
@@ -470,37 +470,37 @@
             {
               "text": "federbusch",
               "confidence": 0.93,
-              "start": "2025-01-14T20:31:56.700000",
+              "start": "2025-01-14T20:31:58.450000",
               "duration": "PT0.9S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:31:57.600000",
+              "start": "2025-01-14T20:32:00.900000",
               "duration": "PT0.3S"
             },
             {
               "text": "naked",
               "confidence": 0.931,
-              "start": "2025-01-14T20:31:57.900000",
+              "start": "2025-01-14T20:32:01.200000",
               "duration": "PT0.6S"
             },
             {
               "text": "for",
               "confidence": 0.857,
-              "start": "2025-01-14T20:31:58.500000",
+              "start": "2025-01-14T20:32:01.800000",
               "duration": "PT0.3S"
             },
             {
               "text": "a",
               "confidence": 0.639,
-              "start": "2025-01-14T20:31:58.800000",
+              "start": "2025-01-14T20:32:02.100000",
               "duration": "PT0.3S"
             },
             {
               "text": "score",
               "confidence": 0.784,
-              "start": "2025-01-14T20:31:59.100000",
+              "start": "2025-01-14T20:32:02.400000",
               "duration": "PT0.3S"
             }
           ],
@@ -515,25 +515,25 @@
             {
               "text": "picked",
               "confidence": 0.906,
-              "start": "2025-01-14T20:32:02.100000",
+              "start": "2025-01-14T20:32:02.700000",
               "duration": "PT0.3S"
             },
             {
               "text": "up",
               "confidence": 0.925,
-              "start": "2025-01-14T20:32:02.400000",
+              "start": "2025-01-14T20:32:03",
               "duration": "PT0.3S"
             },
             {
               "text": "by",
               "confidence": 0.883,
-              "start": "2025-01-14T20:32:02.700000",
+              "start": "2025-01-14T20:32:03.300000",
               "duration": "PT0.3S"
             },
             {
               "text": "pikachu",
               "confidence": 0.925,
-              "start": "2025-01-14T20:32:03",
+              "start": "2025-01-14T20:32:03.600000",
               "duration": "PT0.9S"
             }
           ],
@@ -548,25 +548,25 @@
             {
               "text": "flick",
               "confidence": 0.712,
-              "start": "2025-01-14T20:32:03.400000",
+              "start": "2025-01-14T20:32:04.400000",
               "duration": "PT0.3S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:32:03.700000",
+              "start": "2025-01-14T20:32:04.700000",
               "duration": "PT0.3S"
             },
             {
               "text": "close",
               "confidence": 0.608,
-              "start": "2025-01-14T20:32:04",
+              "start": "2025-01-14T20:32:05",
               "duration": "PT0.3S"
             },
             {
               "text": "crop",
               "confidence": 0.833,
-              "start": "2025-01-14T20:32:04.300000",
+              "start": "2025-01-14T20:32:05.300000",
               "duration": "PT0.3S"
             }
           ],
@@ -581,19 +581,19 @@
             {
               "text": "backhand",
               "confidence": 0.646,
-              "start": "2025-01-14T20:32:05.300000",
+              "start": "2025-01-14T20:32:06.900000",
               "duration": "PT0.6S"
             },
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:32:05.900000",
+              "start": "2025-01-14T20:32:07.500000",
               "duration": "PT0.3S"
             },
             {
               "text": "joe",
               "confidence": 0.835,
-              "start": "2025-01-14T20:32:06.200000",
+              "start": "2025-01-14T20:32:07.800000",
               "duration": "PT0.3S"
             }
           ],
@@ -632,31 +632,31 @@
             {
               "text": "off",
               "confidence": 0.867,
-              "start": "2025-01-14T20:32:11.100000",
+              "start": "2025-01-14T20:32:14.100000",
               "duration": "PT0.3S"
             },
             {
               "text": "the",
               "confidence": 0.759,
-              "start": "2025-01-14T20:32:11.400000",
+              "start": "2025-01-14T20:32:14.400000",
               "duration": "PT0.3S"
             },
             {
               "text": "wall",
               "confidence": 0.964,
-              "start": "2025-01-14T20:32:11.700000",
+              "start": "2025-01-14T20:32:14.700000",
               "duration": "PT0.3S"
             },
             {
               "text": "no",
               "confidence": 0.886,
-              "start": "2025-01-14T20:32:12",
+              "start": "2025-01-14T20:32:15",
               "duration": "PT0.3S"
             },
             {
               "text": "score",
               "confidence": 0.784,
-              "start": "2025-01-14T20:32:12.300000",
+              "start": "2025-01-14T20:32:15.300000",
               "duration": "PT0.3S"
             }
           ],
@@ -2771,19 +2771,19 @@
             {
               "text": "caught",
               "confidence": 0.814,
-              "start": "2025-01-14T20:35:24.600000",
+              "start": "2025-01-14T20:35:26.100000",
               "duration": "PT0.3S"
             },
             {
               "text": "by",
               "confidence": 0.883,
-              "start": "2025-01-14T20:35:24.900000",
+              "start": "2025-01-14T20:35:26.400000",
               "duration": "PT0.3S"
             },
             {
               "text": "hat",
               "confidence": 0.88,
-              "start": "2025-01-14T20:35:25.200000",
+              "start": "2025-01-14T20:35:26.700000",
               "duration": "PT0.3S"
             }
           ],
@@ -4781,13 +4781,13 @@
             {
               "text": "to",
               "confidence": 0.737,
-              "start": "2025-01-14T20:39:01.600000",
+              "start": "2025-01-14T20:39:03.400000",
               "duration": "PT0.3S"
             },
             {
               "text": "hat",
               "confidence": 0.88,
-              "start": "2025-01-14T20:39:01.900000",
+              "start": "2025-01-14T20:39:03.700000",
               "duration": "PT0.3S"
             }
           ],
@@ -7382,43 +7382,43 @@
             {
               "text": "bobbled",
               "confidence": 0.84,
-              "start": "2025-01-14T20:43:17",
+              "start": "2025-01-14T20:43:18.750000",
               "duration": "PT0.6S"
             },
             {
               "text": "and",
               "confidence": 0.435,
-              "start": "2025-01-14T20:43:17.600000",
+              "start": "2025-01-14T20:43:19.350000",
               "duration": "PT0.3S"
             },
             {
               "text": "dropped",
               "confidence": 0.963,
-              "start": "2025-01-14T20:43:17.900000",
+              "start": "2025-01-14T20:43:19.650000",
               "duration": "PT0.54S"
             },
             {
               "text": "by",
               "confidence": 0.883,
-              "start": "2025-01-14T20:43:18.440000",
+              "start": "2025-01-14T20:43:20.190000",
               "duration": "PT0.3S"
             },
             {
               "text": "hat",
               "confidence": 0.88,
-              "start": "2025-01-14T20:43:18.740000",
+              "start": "2025-01-14T20:43:20.490000",
               "duration": "PT0.3S"
             },
             {
               "text": "no",
               "confidence": 0.886,
-              "start": "2025-01-14T20:43:19.040000",
+              "start": "2025-01-14T20:43:20.790000",
               "duration": "PT0.3S"
             },
             {
               "text": "score",
               "confidence": 0.784,
-              "start": "2025-01-14T20:43:19.340000",
+              "start": "2025-01-14T20:43:21.090000",
               "duration": "PT0.3S"
             }
           ],
@@ -7433,31 +7433,31 @@
             {
               "text": "glasses",
               "confidence": 0.714,
-              "start": "2025-01-14T20:43:21",
+              "start": "2025-01-14T20:43:21.600000",
               "duration": "PT0.6S"
             },
             {
               "text": "picks",
               "confidence": 0.792,
-              "start": "2025-01-14T20:43:21.600000",
+              "start": "2025-01-14T20:43:22.200000",
               "duration": "PT0.3S"
             },
             {
               "text": "up",
               "confidence": 0.925,
-              "start": "2025-01-14T20:43:21.900000",
+              "start": "2025-01-14T20:43:22.500000",
               "duration": "PT0.3S"
             },
             {
               "text": "for",
               "confidence": 0.857,
-              "start": "2025-01-14T20:43:22.200000",
+              "start": "2025-01-14T20:43:22.800000",
               "duration": "PT0.3S"
             },
             {
               "text": "white",
               "confidence": 0.886,
-              "start": "2025-01-14T20:43:22.500000",
+              "start": "2025-01-14T20:43:23.100000",
               "duration": "PT0.3S"
             }
           ],
@@ -8405,31 +8405,31 @@
             {
               "text": "deed",
               "confidence": 0.841,
-              "start": "2025-01-14T20:45:19.100000",
+              "start": "2025-01-14T20:45:21.200000",
               "duration": "PT0.3S"
             },
             {
               "text": "by",
               "confidence": 0.883,
-              "start": "2025-01-14T20:45:19.400000",
+              "start": "2025-01-14T20:45:21.500000",
               "duration": "PT0.3S"
             },
             {
               "text": "gloves",
               "confidence": 0.865,
-              "start": "2025-01-14T20:45:19.700000",
+              "start": "2025-01-14T20:45:21.800000",
               "duration": "PT0.3S"
             },
             {
               "text": "no",
               "confidence": 0.886,
-              "start": "2025-01-14T20:45:20",
+              "start": "2025-01-14T20:45:22.100000",
               "duration": "PT0.3S"
             },
             {
               "text": "score",
               "confidence": 0.784,
-              "start": "2025-01-14T20:45:20.300000",
+              "start": "2025-01-14T20:45:22.400000",
               "duration": "PT0.3S"
             }
           ],
@@ -9107,25 +9107,25 @@
             {
               "text": "huck",
               "confidence": 0.729,
-              "start": "2025-01-14T20:46:25.500000",
+              "start": "2025-01-14T20:46:26.300000",
               "duration": "PT0.3S"
             },
             {
               "text": "turf",
               "confidence": 0.846,
-              "start": "2025-01-14T20:46:25.800000",
+              "start": "2025-01-14T20:46:27.650000",
               "duration": "PT0.3S"
             },
             {
               "text": "no",
               "confidence": 0.886,
-              "start": "2025-01-14T20:46:26.100000",
+              "start": "2025-01-14T20:46:28.700000",
               "duration": "PT0.3S"
             },
             {
               "text": "score",
               "confidence": 0.784,
-              "start": "2025-01-14T20:46:26.400000",
+              "start": "2025-01-14T20:46:29",
               "duration": "PT0.3S"
             }
           ],
