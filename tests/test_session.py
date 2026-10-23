@@ -127,15 +127,15 @@ def test_replay_of_the_game_matches_the_batch_pipeline(game: yus.Game, transcrip
 
     truth = compute_stats(resolver.resolve_stream(game.official_stream), game.teams)
     assert truth.score == {WHITE: 14, BLACK: 9}
-    # The extractor counts one more black goal: "blade in the end zone nope not in the end zone" (docs/extraction.md, Limitations).
-    assert final.score[WHITE] == 14 and final.score[BLACK] in (9, 10)
+    assert final.score == truth.score  # "blade in the end zone, nope, not in the end zone" is no goal (docs/extraction.md)
     assert final.summary.startswith(f"{WHITE} 14, {BLACK} ")
 
     assert_settled_never_change(snapshots, final)
     for snap in snapshots[::25]:
         assert snap.stats.provisional_from == snap.settled_count
         assert snap.raw["Gavin Kistner"].events[: snap.settled_count] == raw.events[: snap.settled_count]
-        assert len(snap.official.events) - snap.settled_count <= 1  # one commentator: only the open throw is provisional
+        provisional, last = snap.official.events[snap.settled_count :], transcript.groups[snap.commentators[0].groups - 1]
+        assert all(event.when >= last.start for event in provisional[1:-1])  # the open throw, and a scoring group's events (its first may start earlier)
 
 
 def test_snapshot_reports_commentators_and_names(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
@@ -433,22 +433,140 @@ def test_threads_feed_and_read_concurrently(game: yus.Game, transcript: yus.Tran
     assert_same_snapshot(GameSession.load(tmp_path).snapshot(), snap)
 
 
-def test_merged_events_settle_when_every_commentator_has_gone_quiet(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
-    """A pause in play, or the end of the game: once both commentators are complete past the last event, everything settles
-    but the last two events, which wait to see what follows them. (With a fixed 20 s allowance, the last 10 waited for the next
-    event, here as in the real two-commentator run.)"""
-    other = other_commentator(transcript, 5.0, drop=8)
-    session = GameSession(game, descriptions)
+def two_commentators(game: yus.Game, descriptions: GameDescriptions, directory: pathlib.Path | None = None) -> GameSession:
+    session = GameSession(game, descriptions, directory)
     session.add_commentator("A")
     session.add_commentator("B", focus_team="light")
+    return session
+
+
+def test_merged_events_settle_when_every_commentator_has_gone_quiet(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    """The end of the game: once both commentators are complete past the last event, everything settles, the last throw too.
+    (It used to wait for the next event, as the last 2 did in the real two-commentator run, or 10 with a fixed 20 s allowance.)"""
+    other = other_commentator(transcript, 5.0, drop=8)
+    session = two_commentators(game, descriptions)
     snapshots = feed_in_turn(session, {"A": transcript.groups, "B": other.groups})
+    assert snapshots[-1].settled_count < len(snapshots[-1].official.events)
     quiet = arrival(transcript.groups[-1]) + dt.timedelta(seconds=30)
     session.advance(quiet, "A")
     session.advance(quiet + dt.timedelta(seconds=5), "B")
     snapshots.append(paused := session.snapshot())
-    assert paused.settled_count == len(paused.official.events) - 2 == 198
+    assert paused.settled_count == len(paused.official.events) == 200
     session.finish()
     assert_settled_never_change(snapshots, session.snapshot())
+
+
+def test_a_pause_in_play_settles_the_events_before_it(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    """15 s without words after "hammer to turtle, dropped it" (group 220): both commentators' transcripts are complete up to the
+    next words, and every event before the pause settles before play resumes, as it stands."""
+    other = other_commentator(transcript, 5.0, drop=8)
+    resume = transcript.groups[220].start
+    a, b = transcript.groups[:220], [group for group in other.groups if group.start < resume + dt.timedelta(seconds=5)]
+    session = two_commentators(game, descriptions)
+    snapshots = feed_in_turn(session, {"A": a, "B": b})
+    assert snapshots[-1].settled_count < len(snapshots[-1].official.events)
+    session.advance(resume - dt.timedelta(seconds=0.1), "A")
+    session.advance(resume + dt.timedelta(seconds=4.9), "B")
+    snapshots.append(paused := session.snapshot())
+    assert paused.settled_count == len(paused.official.events) and paused.official.events[-1].when < resume - dt.timedelta(seconds=10)
+    snapshots += feed_in_turn(session, {"A": transcript.groups[220:], "B": other.groups[len(b) :]})
+    session.finish()
+    final = session.snapshot()
+    assert_settled_never_change(snapshots, final)
+
+    uninterrupted = two_commentators(game, descriptions)
+    feed_in_turn(uninterrupted, {"A": transcript.groups, "B": other.groups})
+    uninterrupted.finish()
+    assert final.official.events == uninterrupted.snapshot().official.events
+
+
+def test_a_commentator_who_says_nothing_does_not_hold_settling_back(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions, monkeypatch: pytest.MonkeyPatch):
+    """B stops talking after group 100 but goes on streaming: their transcript is complete up to 17 s behind (LiveTranscriber's
+    horizon in silence). After 30 s without words B no longer holds settling back, and A's events settle as A's progress
+    allows. When B talks again, both are merged as before."""
+    other = other_commentator(transcript, 5.0, drop=8)  # B misses every 8th group: B's 88th is A's 100th, B's 158th A's 180th
+
+    def run() -> GameSnapshot:
+        session = two_commentators(game, descriptions)
+        snapshots = feed_in_turn(session, {"A": transcript.groups[:100], "B": other.groups[:88]})
+        for group in transcript.groups[100:180]:
+            session.add_groups("A", [group])
+            session.advance(arrival(group), "A")
+            session.advance(arrival(group) - dt.timedelta(seconds=12), "B")
+            snapshots.append(session.snapshot())
+        quiet = snapshots[-1]
+        snapshots += feed_in_turn(session, {"A": transcript.groups[180:], "B": other.groups[158:]})
+        session.finish()
+        assert_settled_never_change(snapshots, final := session.snapshot())
+        assert len(final.official.events) == 200
+        return quiet
+
+    quiet = run()
+    assert quiet.official.events[quiet.settled_count].when >= transcript.groups[179].start - dt.timedelta(seconds=5)  # A's progress
+    monkeypatch.setattr("yus.session.ABSENT_S", math.inf)
+    held = run()
+    assert held.settled_count < quiet.settled_count  # B's silent horizon held settling back
+
+
+MISSED = 105  # "backhand to glasses", which A misses in late_reports()
+
+
+def late_reports(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions, directory: pathlib.Path | None = None) -> tuple[GameSession, list[GameSnapshot]]:
+    """A misses group 105. B's phone goes quiet after group 100 and the server, after a while, takes B's transcript as complete
+    up to now. Then B's phone sends the audio it kept, and B's words of the last 60 s arrive late, group 105 among them."""
+    a = [group for i, group in enumerate(transcript.groups) if i != MISSED]
+    other = other_commentator(transcript, 5.0, drop=8)
+    session = two_commentators(game, descriptions, directory)
+    snapshots = feed_in_turn(session, {"A": a[:100], "B": other.groups[:88]})
+    before = snapshots[-1]
+    for group in a[100:139]:
+        session.add_groups("A", [group])
+        session.advance(arrival(group), "A")
+        session.advance(arrival(group) + dt.timedelta(seconds=5), "B")
+        snapshots.append(session.snapshot())
+    assert snapshots[-1].settled_count > before.settled_count + 10
+    snapshots += feed_in_turn(session, {"A": a[139:], "B": other.groups[88:]})
+    return session, snapshots
+
+
+def test_late_reports_do_not_change_settled_events(
+    game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+):
+    """The events that settled while B was quiet stay as they were, and so does a saved and loaded session. B's report of group
+    105, which only B heard, came after its play had settled: it is left out of the official stream, listed in `late` and
+    logged once."""
+    with caplog.at_level("WARNING", logger="yus.session"):
+        session, snapshots = late_reports(game, transcript, descriptions, tmp_path)
+    assert [record.getMessage() for record in caplog.records] == ["Left out 1 event(s) reported after their play had settled: Throw at 20:37:27 from B"]
+    (late,) = snapshots[-1].late
+    assert (late.player, late.receiver) == ("Tristan Weber", "glasses")
+    session.save()
+    loaded = GameSession.load(tmp_path)
+    assert_same_snapshot(loaded.snapshot(), session.snapshot())
+    for each in (session, loaded):
+        each.finish()
+    final = session.snapshot()
+    assert_settled_never_change(snapshots, final)
+    assert_same_snapshot(loaded.snapshot(), final, version=False)
+    assert final.late == [late] and len(final.official.events) == 199  # the batch pipeline has 200
+
+
+def test_a_description_renames_settled_events_but_keeps_late_reports_out(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    """A description re-resolves names in settled events, and nothing else: the same events stay settled, and the late report
+    stays out. (Each description used to start settling afresh, which put the late report back among settled events.)"""
+    session, snapshots = late_reports(game, transcript, descriptions)
+    settled = snapshots[-1].official.events[: snapshots[-1].settled_count]
+    session.describe("white", ["purple hat"], label="purple hat")  # a description no commentator used
+    assert session.snapshot().official.events[: len(settled)] == settled and len(session.snapshot().late) == 1
+    session.describe("white", ["glasses"], label="Specs")
+    renamed = session.snapshot()
+    assert renamed.settled_count >= len(settled) and len(renamed.late) == 1
+    named = {"player": "Specs", "receiver": "Specs"}
+    for was, now in zip(settled, renamed.official.events):
+        assert now == was.model_copy(update={field: named[field] for field in named if getattr(was, field, None) == "glasses"})
+    assert sum(now != was for was, now in zip(settled, renamed.official.events)) == 28
+    session.finish()
+    assert_settled_never_change([renamed], session.snapshot())
 
 
 def test_a_drifting_clock_never_unsettles_events(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
