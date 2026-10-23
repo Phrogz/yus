@@ -413,6 +413,27 @@ def test_mlx_kwargs_match_signature() -> None:
     accepted = set(inspect.signature(mlx_whisper.transcribe).parameters) | set(inspect.signature(DecodingOptions).parameters)
     assert set(kwargs) <= accepted
     assert kwargs["condition_on_previous_text"] is False
+    assert "clip_timestamps" not in kwargs and "clip_timestamps" in accepted
+
+    def clip(*flags: str) -> list[float]:
+        return tr.mlx_transcribe_kwargs(tr.build_arg_parser().parse_args(["game.ogg", *flags]), "m", "")["clip_timestamps"]
+
+    assert clip("--stop", "60") == [0.0, 60.0] and clip("--start", "5", "--stop", "60") == [0.0, 60.0]  # windows as in a whole-file run
+    assert "clip_timestamps" not in tr.mlx_transcribe_kwargs(tr.build_arg_parser().parse_args(["game.ogg", "--start", "5"]), "m", "")
+
+
+def test_stop_ends_decoding() -> None:
+    """--start/--stop keep the segments that overlap the range; faster-whisper's lazy segments are not decoded past --stop."""
+    taken: list[float] = []
+
+    def lazy():
+        for start in (0.0, 4.0, 8.0, 12.0, 16.0):
+            taken.append(start)
+            yield segment(whisper_word(" Pull!", start, start + 1.0))
+
+    transcript = tr.transcript_from_segments(lazy(), recording_start=T0, show_progress=False, start_time=5.5, stop_time=12.0)
+    assert [g.interpretations[0].words[0].start for g in transcript.groups] == [T0 + dt.timedelta(seconds=8)]
+    assert taken == [0.0, 4.0, 8.0, 12.0]
 
 
 def test_model_repos() -> None:

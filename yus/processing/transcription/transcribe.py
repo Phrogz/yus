@@ -256,11 +256,12 @@ def transcript_from_segments(
     last_reported: int | None = None
     replacements = replacements or {}
     for seg in segments:
-        # Skip segments outside the requested time range
+        # Skip segments outside the requested time range. Segments come in time order, so stop at the first one past
+        # stop_time: faster-whisper decodes lazily, and then decodes no further.
         if start_time is not None and float(seg.end) < start_time:
             continue
         if stop_time is not None and float(seg.start) >= stop_time:
-            continue
+            break
 
         if show_progress and duration:
             percent = int(min(100, max(0, (float(seg.end) / duration) * 100)))
@@ -336,13 +337,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--recording-start",
         default="auto",
-        help="Recording start as an ISO timestamp (local wall-clock time; a UTC offset is ignored), 'now', or 'auto' (default): the creation time in the file's"
-        " metadata, else a time in the file name like 20250114T2030-0700.ogg, else now.",
+        help="Recording start as an ISO timestamp (local wall-clock time: 20:30-07:00 is 20:30, but a UTC time ending in Z or +00:00 is converted to this"
+        " computer's zone), 'now', or 'auto' (default): the creation time in the file's metadata, else a time in the file name like 20250114T2030-0700.ogg, else now.",
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output and output location printing.")
     parser.add_argument("--print-transcript", action="store_true", help="Print transcript text to stdout as it is produced.")
-    parser.add_argument("--start", type=float, help="Start time in seconds.")
-    parser.add_argument("--stop", type=float, help="Stop time in seconds.")
+    parser.add_argument("--start", type=float, help="Keep words from this many seconds into the file on (it is still decoded from its start).")
+    parser.add_argument("--stop", type=float, help="Stop decoding this many seconds into the file.")
     parser.add_argument(
         "--condition-on-previous-text",
         action="store_true",
@@ -571,7 +572,7 @@ def faster_whisper_transcribe_kwargs(args: argparse.Namespace, prompt: str) -> d
 
 
 def mlx_transcribe_kwargs(args: argparse.Namespace, model: str, prompt: str) -> dict[str, Any]:
-    return {
+    kwargs: dict[str, Any] = {
         "path_or_hf_repo": model,
         "language": args.language,
         "initial_prompt": prompt or None,
@@ -579,6 +580,11 @@ def mlx_transcribe_kwargs(args: argparse.Namespace, model: str, prompt: str) -> 
         "condition_on_previous_text": args.condition_on_previous_text,
         "verbose": None if args.quiet else False,  # False shows a progress bar
     }
+    if args.stop is not None:
+        # Decode no further than --stop. Decoding still starts at 0 for --start: the prompt primes only the first window, and
+        # starting there gives the windows, and so the words, of a whole-file run (primed at 400 s, Whisper invented text).
+        kwargs["clip_timestamps"] = [0.0, args.stop]
+    return kwargs
 
 
 def faster_whisper_token_counter(model: Any, language: str) -> Callable[[str], int]:

@@ -51,8 +51,9 @@ yus-transcribe audio.wav \
 - `--team` - Team JSON file path (can be specified multiple times for different teams). A file that fails to load or validate stops the run with an error.
 - `--output` - Output file path (default: `<audio>.transcript.json`)
 - `--text` - Write plain text instead of JSON
-- `--start` - Start transcription at this time (seconds)
-- `--stop` - Stop transcription at this time (seconds)
+- `--start` - Keep words from this many seconds into the file on. The file is still decoded from its start: Whisper's
+  30-second windows then fall where they would in a whole-file run (the prompt primes the first one), so the words match it
+- `--stop` - Stop decoding this many seconds into the file
 - `--quiet` - Suppress progress output
 - `--print-transcript` - Print transcript text to stdout as it's produced
 
