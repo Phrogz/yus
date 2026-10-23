@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>YUS Commentate</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header><a href="/">YUS</a><span id="score" class="muted"></span></header>
+  <main>
+    <form id="setup" autocomplete="on">
+      <label>Your name <input id="name" name="name" autocomplete="nickname" maxlength="80" required></label>
+      <label>Following <select id="focus"><option value="">Both teams</option></select></label>
+    </form>
+    <button id="toggle" class="mic" type="button">Start</button>
+    <div id="status" class="status" role="status" aria-live="polite">Not started</div>
+    <div class="level" aria-hidden="true"><div id="level"></div></div>
+    <p id="notice" class="muted"></p>
+    <section>
+      <h2>Transcript</h2>
+      <ol id="transcript"></ol>
+      <p id="pending"></p>
+    </section>
+    <section>
+      <h2>Your latest events</h2>
+      <ol id="events"></ol>
+    </section>
+  </main>
+  <script src="/static/commentate.js"></script>
+</body>
+</html>

@@ -15,6 +15,10 @@ dependencies = [
     "google-cloud-speech>=2.30.0",
     "faster-whisper>=1.1.0",
     "pandas>=2.2.3",
+    "starlette>=0.40",
+    "uvicorn[standard]>=0.30",
+    "a2wsgi>=1.10",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +31,8 @@ yus-live-transcribe = "yus.processing.transcription.live:main"
 yus-events = "yus.processing.event_extraction.cli:main"
 yus-score = "yus.processing.evaluation:main"
 yus-stats = "yus.processing.stats.cli:main"
+yus-serve = "yus.web.server:main"
+yus-replay = "yus.web.replay:main"
 
 [tool.uv]
 package = true
