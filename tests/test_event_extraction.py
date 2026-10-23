@@ -15,7 +15,7 @@ import pytest
 import yus
 from tests.data.gruindoor_20250114T2030 import build_game
 from yus.processing.evaluation import score
-from yus.processing.event_extraction import Association, EventExtractor, extract_events, team_label
+from yus.processing.event_extraction import AssistedExtractor, Association, EventExtractor, LLMAssistant, extract_events, team_label
 from yus.processing.event_extraction import cli
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
 from yus.sports import ultimate
@@ -141,13 +141,15 @@ PHRASES = [
     "what's the score", "5-4 {t}", "{n} with the d", "{n} gets it", "on {t} we have {n}, {n} and {n}", "{n} is {n} on {t}", "{t}", "for",
     "D'd by {n} for {t}", "{t} picks it up", "D-line comes on for {t}", "{n} is {n} and {n} is {n}", "{n}'s huck", "uh-huh",
     "nope", "not in the end zone", "not a score", "not {n}", "that wasn't {n}", "that was {n}", "sorry, to {n}", "actually", "wait, {n}",
-    "for a score", "joe", "tristan", "george", "turtle", "deed by joe",
+    "for a score", "joe", "tristan", "george", "turtle", "deed by joe", "nope, not in", "{n} not in position", "out of the end zone",
+    "sorry, {n}, what a throw", "er",
 ]  # fmt: skip
 NAMES = ["kaia", "pikachu", "close crop", "the kid", "somebody", "gloves", "Adam Federbusch", "red shorts", "José", "Kaia Mann's"]
 
 
 def random_groups(rng: random.Random) -> list[yus.TranscriptGroup]:
-    """Random commentary from PHRASES, with random punctuation and capitals, cut into groups of 1-8 words at random gaps."""
+    """Random commentary from PHRASES, with random punctuation and capitals, cut into groups of 1-8 words at random gaps. A third
+    of the groups give all their words one start time, as Whisper sometimes does."""
     words: list[str] = []
     for _ in range(rng.randint(5, 40)):
         text = rng.choice(PHRASES)
@@ -158,7 +160,7 @@ def random_groups(rng: random.Random) -> list[yus.TranscriptGroup]:
     groups, clock = [], NOW
     while words:
         size = rng.randint(1, 8)
-        groups.append(group(" ".join(words[:size]), clock))
+        groups.append(group(" ".join(words[:size]), clock, step=rng.choice([0.4, 0.4, 0.0])))
         clock += dt.timedelta(seconds=0.4 * size + rng.choice([0.2, 1.0, 2.5, 4.0, 8.0]))
         words = words[size:]
     return groups
@@ -330,8 +332,63 @@ def test_a_score_can_be_taken_back_by_the_next_group(teams: list[yus.Team]):
     assert brief(extract(first, "flick to joe in the end zone", "sorry, to tristan", teams=teams).events[0]) == ("Throw", "white", "kaia", "tristan", "flick", None, "CS")
     assert brief(extract(first, "flick to joe for a score. Gloves picks it up.", "Sorry, no score.", teams=teams).events[0])[-1] == ""  # after a pickup too
     assert brief(extract(first, "flick to joe for a score, nope, not in, no score", teams=teams).events[0])[-1] == ""
+    assert brief(extract(first, "flick to joe in the end zone", "sorry, it wasn't in", teams=teams).events[0])[-1] == "C"
     after_a_defense = extract(first, "flick to joe for a score", "picked up by gloves. backhand to george. deed by tristan. No score.", teams=teams)
     assert brief(after_a_defense.events[0])[-1] == "CS"  # "no score" is about the last throw only
+
+
+@pytest.mark.parametrize(
+    "texts, scored",
+    [
+        (("flick to joe for a score", "picked up by gloves. out of the end zone, flick to turtle"), ("kaia", "joe")),
+        (("flick to joe for a score", "picked up by gloves. turtle is not in this point"), ("kaia", "joe")),  # "not in" without "nope"
+        (("huck to joe for the score, george not in position",), ("kaia", "joe")),
+        (("huck to joe for the score", "sorry, kaia, that was a great throw"), ("kaia", "joe")),  # the name starts a remark
+        (("flick to joe. joe backhand to emily for the score", "actually, tristan has been great tonight"), ("joe", "emily")),
+        (("huck to joe for the score", "sorry, kaia"), ("kaia", "joe")),  # kaia threw it, so she did not catch it
+    ],
+)
+def test_remarks_after_a_score_take_nothing_back(teams: list[yus.Team], texts: tuple[str, ...], scored: tuple[str, str]):
+    events = extract("picked up by kaia for white", *texts, teams=teams).events
+    assert [(e.team, e.player, e.receiver) for e in events if getattr(e, "scored", False)] == [("white", *scored)]
+
+
+def test_a_correction_changes_one_of_two_throws_said_at_the_same_time(teams: list[yus.Team]):
+    """Whisper sometimes gives several words one start time; a correction changes only the last of two throws among them."""
+
+    def corrected(text: str) -> list[tuple]:
+        extractor = EventExtractor(teams)
+        extractor.feed(group("picked up by kaia for white", NOW))
+        extractor.feed(group("flick to joe flick to tristan for a score", NOW + dt.timedelta(seconds=5), step=0.0))
+        extractor.feed(group(text, NOW + dt.timedelta(seconds=10)))
+        extractor.finish()
+        return [brief(e)[2:4] + brief(e)[-1:] for e in extractor.events]
+
+    assert corrected("no score") == [("kaia", "joe", "C"), ("joe", "tristan", "")]
+    assert corrected("sorry, to george") == [("kaia", "joe", "C"), ("joe", "george", "CS")]
+
+
+def test_the_llm_is_asked_only_about_the_group_after_a_score(teams: list[yus.Team]):
+    """The scoring group waits for the next one, which the model is asked about alone: its revision keeps the score."""
+    sent: list[dict] = []
+    revision = {"kind": "throw", "team": "dark", "player": "gloves", "receiver": "turtle", "type": "flick", "direction": "huck", "result": "caught", "wall": False}
+
+    def post(url: str, body: dict, timeout: float) -> dict:
+        sent.append(body)
+        return {"message": {"content": json.dumps({"correct": False, "events": [revision]})}}
+
+    extractor = AssistedExtractor(EventExtractor(teams), LLMAssistant("test", post=post), wait=True)
+    for k, text in enumerate(["picked up by kaia for white", "flick to joe. backhand to tristan for a score", "picked up by gloves, actually a nice huck to turtle"]):
+        extractor.feed(group(text, NOW + dt.timedelta(seconds=5 * k)))
+    extractor.finish()
+    assert [call.outcome for call in extractor.calls] == ["revised"]
+    assert [brief(e)[1:] for e in extractor.events] == [
+        ("white", "kaia", "joe", "flick", None, "C"),
+        ("white", "joe", "tristan", "backhand", None, "CS"),
+        ("dark", "gloves", "turtle", "flick", "huck", "C"),
+    ]
+    question = sent[0]["messages"][-1]["content"]
+    assert "Disc before: dark\n" in question and "2. {" not in question and "started before" not in question
 
 
 def test_a_score_is_final_after_the_timeout(teams: list[yus.Team]):

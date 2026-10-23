@@ -35,6 +35,7 @@ CHATTER = frozenset({Tag.FILLER, Tag.NAME, Tag.UNK, Tag.NUM})  # what an identif
 TIES = frozenset({Tag.NAME, Tag.UNK, Tag.PICKUP, Tag.CHECKIN, Tag.TO, Tag.DEFENSE, Tag.INTERCEPT})  # what a bare team name may follow
 RESTATED = frozenset({None, Tag.BOUNDARY, Tag.TO, Tag.CORRECT, Tag.NAME, Tag.TEAM, Tag.TEAMREF})  # what may follow a name that replaces another
 NEGATIONS = frozenset({"not", "wasn't", "isn't", "wasnt", "isnt"})  # "not joe", "that wasn't joe"
+NEGATED = frozenset({"it", "that", "it's", "that's", "he", "she"})  # what may stand between "nope" and "not in": "sorry, it wasn't in"
 
 
 class Association(NamedTuple):
@@ -147,7 +148,7 @@ class EventExtractor:
         self._unsettled: list[_Throw | _Defense] = []  # the last group's events, while a correction in the next one may change them
         self._window: tuple[EventExtractor, list[yus.TranscriptGroup]] | None = None  # the state before the unsettled group, and it
         self._start: EventExtractor | None = None  # the state before the group being parsed
-        self._late: dict[tuple[str, dt.datetime], dict[str, object]] = {}  # corrections of finished events: (kind, when) -> changes
+        self._late: dict[tuple[dt.datetime, int], dict[str, object]] = {}  # corrections of finished events: (when, index in events) -> changes
         self._cues: set[tuple[dt.datetime, str]] = set()  # the words that made them
         self.last_items: list[Item] = []  # the last group's items, as parsed (line-ups and identifications removed)
         self._handlers = self._bind_handlers()
@@ -189,6 +190,12 @@ class EventExtractor:
     def final_count(self) -> int:
         """How many of `events` are final."""
         return len(self._final)
+
+    @property
+    def open_from(self) -> int:
+        """Where the throw still open is in `events` (`len(events)` if none). The next group's own events start here: those between
+        `final_count` and here are the last group's, waiting for a correction in the next one ("nope, not in the end zone")."""
+        return len(self._final) + len(self._unsettled)
 
     def feed(self, group: yus.TranscriptGroup) -> None:
         """Parse the next transcript group (its first interpretation)."""
@@ -388,7 +395,7 @@ class EventExtractor:
         return known.pop() if len(known) == 1 else team
 
     def _finish_throw(self, throw: _Throw) -> None:
-        changes = self._late.get(("throw", throw.when))
+        changes = self._late.get((throw.when, self._position()))
         if changes:
             _change(throw, changes)
         if throw.team is None:
@@ -434,6 +441,17 @@ class EventExtractor:
     def _last_throw(self) -> _Throw | None:
         return next((record for record in self._recent() if isinstance(record, _Throw)), None)
 
+    def _position(self, record: _Throw | _Defense | None = None) -> int:
+        """Index in `events` of the finished `record`, else of the next event to finish. With its time, it tells apart events that
+        Whisper gave the same time ("flick to joe flick to tristan")."""
+        position = len(self._final)
+        for records in (self._unsettled, self._done):
+            for k, other in enumerate(records):
+                if other is record:
+                    return position + k
+            position += len(records)
+        return position
+
     def _retract(self, record: _Throw | _Defense, changes: dict[str, object], cue: Item) -> None:
         """Change facts of `record` that `cue` took back: at once if it is the open throw, else by parsing again from before the
         groups that made it, with the change made when it finishes (so later events follow it). Final events never change."""
@@ -441,7 +459,7 @@ class EventExtractor:
             _change(record, changes)
             return
         self._cues.add((cue.start, cue.text))
-        target = ("throw" if isinstance(record, _Throw) else "defense", record.when)
+        target = (record.when, self._position(record))
         self._late[target] = {**self._late.get(target, {}), **changes}
         if self._window is not None:
             raise _Replay(*self._window)
@@ -644,9 +662,10 @@ class EventExtractor:
         return i + 1
 
     def _restates(self, group: _Group, i: int, name: str) -> bool:
-        """Handle a name that corrects another: "not joe" (remembered), then any name when joe was said, or after "sorry" in the
-        same sentence, "that was connor" or a name no open throw takes ("to joe, sorry, tristan"). Those must be known names (a
-        roster, a line-up, or an earlier event), so that "wait, he stepped out" replaces nobody. True if it did."""
+        """Handle a name that corrects another: "not joe" (remembered), then any name when joe was said; or, right after "sorry"
+        and ending its clause, "that was connor" or a name no open throw takes ("to joe, sorry, tristan"). Those must be known
+        names (a roster, a line-up, or an earlier event), so that "wait, he stepped out" and "sorry, kaia, that was a great throw"
+        replace nobody. True if it did."""
         before = tuple(item.text if item.tag is Tag.FILLER else "" for item in group.items[max(i - 2, 0) : i])
         if before[-1:] and before[-1] in NEGATIONS:  # "not joe", "that wasn't joe"
             group.correcting, group.wrong = True, name
@@ -663,28 +682,32 @@ class EventExtractor:
             and normalize(self._said) != normalize(name)
             and (self.knows(name) or normalize(name) in self._seen)
             and _cued(group, i)
+            and _ends_clause(group.items, i)
         ):
             old = self._said
         else:
             return False
-        self._rename(group, group.items[i], old, name)
-        return True
+        return self._rename(group, group.items[i], old, name)
 
-    def _rename(self, group: _Group, cue: Item, old: str, new: str) -> None:
-        """Say `new` wherever the open throw, the most recent finished event that names `old`, or who holds the disc said `old`."""
+    def _rename(self, group: _Group, cue: Item, old: str, new: str) -> bool:
+        """Say `new` wherever the open throw, the most recent finished event that names `old`, or who holds the disc said `old`.
+        False, changing nothing, if that would make a throw's thrower its receiver ("to joe for the score" | "sorry, kaia")."""
+        key = normalize(old)
+        record = None
+        if not self._decided(cue):
+            record = next((r for r in self._recent() if r is not self._pending and key in (normalize(r.player or ""), normalize(getattr(r, "receiver", None) or ""))), None)
+        if any(_to_self(r, old, new) for r in (self._pending, record) if isinstance(r, _Throw)):
+            return False
         group.correcting, group.wrong = False, None
         self._said = new
-        if self.holder is not None and normalize(self.holder) == normalize(old):
+        if self.holder is not None and normalize(self.holder) == key:
             self.holder = new
         changes: dict[str, object] = {"rename": (old, new)}
         if self._pending is not None:
             _change(self._pending, changes)
-        if self._decided(cue):
-            return
-        key = normalize(old)
-        record = next((r for r in self._recent() if r is not self._pending and key in (normalize(r.player or ""), normalize(getattr(r, "receiver", None) or ""))), None)
         if record is not None:
             self._retract(record, changes, cue)
+        return True
 
     def _name_pickup(self, group: _Group, i: int, j: int, following: Tag | None, name: str | None) -> int | None:
         if following not in (Tag.PICKUP, Tag.CHECKIN):  # "stephen picks it up", "gloves taps it in"
@@ -851,7 +874,7 @@ class EventExtractor:
                 throw.team = thrower_team
         team = next((t for t in (explicit, self._other(thrower_team), defender) if isinstance(t, int)), None)
         defense = _Defense(item.start, team, name, item.tag is Tag.INTERCEPT)
-        changes = self._late.get(("defense", defense.when))
+        changes = self._late.get((defense.when, self._position()))
         if changes:
             _change(defense, changes)
         self._done.append(defense)
@@ -874,10 +897,14 @@ class EventExtractor:
         return i + 1
 
     def _on_not_in(self, group: _Group, i: int) -> int:
-        """ "not in the end zone", "not a score": the most recent throw, if said to score, did not (it may still have been caught)."""
+        """ "not in the end zone", "not a score", "nope, not in": the most recent throw, if said to score, did not (it may still have
+        been caught). A bare "not in" counts only right after a correction word: "george not in position" takes nothing back."""
+        item = group.items[i]
+        if item.value == "cued" and not _cued(group, i, NEGATED):
+            return i + 1
         target = self._last_throw()
-        if target is not None and (target.scored or target.ez_in or target.ez_to) and not self._decided(group.items[i]):
-            self._retract(target, {"scored": False}, group.items[i])
+        if target is not None and (target.scored or target.ez_in or target.ez_to) and not self._decided(item):
+            self._retract(target, {"scored": False}, item)
         return i + 1
 
     def _on_throwaway(self, group: _Group, i: int) -> int:
@@ -920,14 +947,30 @@ class EventExtractor:
         return i + 1
 
 
-def _cued(group: _Group, i: int) -> bool:
-    """Is there a correction word ("sorry", "nope") before item i in its sentence?"""
+def _cued(group: _Group, i: int, between: frozenset[str] | None = None) -> bool:
+    """Does a correction word come right before item i, with only commas and fillers (those in `between`, if given) between
+    ("sorry, that was tristan")?"""
     for item in reversed(group.items[:i]):
         if item.tag is Tag.CORRECT:
             return True
-        if item.tag is Tag.BOUNDARY and item.value:
+        if not (item.tag is Tag.BOUNDARY and not item.value) and not (item.tag is Tag.FILLER and (between is None or item.text in between)):
             return False
     return False
+
+
+def _ends_clause(items: list[Item], i: int) -> bool:
+    """Does the name at item i end its clause ("to joe, sorry, tristan", "that was connor to james"), rather than start a remark
+    ("sorry, kaia, that was a great throw", "actually, tristan has been great tonight")?"""
+    k = i + 1
+    while k < len(items) and items[k].tag is Tag.BOUNDARY and not items[k].value:
+        k += 1
+    return k == len(items) or items[k].tag in (Tag.BOUNDARY, Tag.TO, Tag.TEAM, Tag.TEAMREF, Tag.CORRECT)
+
+
+def _to_self(throw: _Throw, old: str, new: str) -> bool:
+    """Would saying `new` for `old` make the throw's thrower its receiver?"""
+    player, receiver = (new if name and normalize(name) == normalize(old) else name for name in (throw.player, throw.receiver))
+    return bool(player and receiver and normalize(player) == normalize(receiver))
 
 
 def _change(record: _Throw | _Defense, changes: dict[str, object]) -> None:

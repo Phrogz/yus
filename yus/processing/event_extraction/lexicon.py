@@ -30,7 +30,7 @@ class Tag(enum.Enum):
     CAUGHT = "caught"
     SCORE = "score"
     NOSCORE = "no score"
-    NOT_IN = "not in"  # takes a score back: "not in the end zone", "not a score"
+    NOT_IN = "not in"  # takes a score back: "not in the end zone", "not a score"; value "cued" for "not in", said after "nope"
     DROP = "dropped"
     THROWAWAY = "throws it away"
     DEFENSE = "defense"
@@ -96,8 +96,10 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.CAUGHT, "caught by|catch by|caught|catches|grabbed by|grab by|hauled in by|reeled in by|received by|makes the catch|make the catch|with the catch")
     add(Tag.SCORE, "for a score|for the score|for a goal|for the goal|for a point|for the point|scores|score|goal|touchdown")
     add(Tag.NOSCORE, "no score|no goal|not caught|no catch")
-    add(Tag.NOT_IN, "not in the end zone|not in the endzone|not in end zone|not in endzone|not in the zone|not in|wasn't in|was not in|isn't in")
-    add(Tag.NOT_IN, "not a score|not a goal|not for a score|not for the score|not a point|out of the end zone|short of the end zone")
+    add(Tag.NOT_IN, "not in the end zone|not in the endzone|not in end zone|not in endzone|not in the zone")
+    add(Tag.NOT_IN, "not a score|not a goal|not for a score|not for the score|not a point|short of the end zone")
+    add(Tag.NOT_IN, "not in|wasn't in|was not in|isn't in", "cued")  # only right after a correction word: "nope, not in", not "george not in position"
+    add(Tag.FILLER, "out of the end zone|out of the endzone")  # where a pickup is taken from, not a throw's outcome
     add(Tag.DROP, "dropped|drops|drop|drop it|dropped it|turfed|turf|turfs|turfs it|out of bounds|out the back")
     add(Tag.THROWAWAY, "throwaway|throw away|thrown away|throws it away|throw it away|threw it away")
     add(Tag.DROP, "incomplete|missed|misses|overthrown|overthrows|stalled|stalled out|stall|turnover|turn over")

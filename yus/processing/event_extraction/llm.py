@@ -637,14 +637,14 @@ class AssistedExtractor:
     def _parse(self, extractor: EventExtractor, entry: _Entry) -> list[yus.Event]:
         """Feed the entry's group to `extractor` with the rules, noting where its events start; returns the open events before it."""
         extractor.advance(entry.group.words[0].start)
-        entry.start = extractor.final_count
+        entry.start = extractor.open_from  # not final_count: a scoring group's events wait there, but they are not this group's
         before = extractor.events[entry.start :]
         entry.open_before = bool(before)
         entry.possession = extractor.labels[extractor.possession] if extractor.possession is not None else None
         entry.holder = extractor.holder if not before else getattr(before[0], "player", None)
         extractor.feed(entry.group)
         entry.rule = extractor.events[entry.start :]
-        entry.open_after = extractor.final_count < len(extractor.events)
+        entry.open_after = extractor.open_from < len(extractor.events)
         entry.defense_words = sum(item.tag in (Tag.DEFENSE, Tag.INTERCEPT) for item in extractor.last_items)
         return before
 

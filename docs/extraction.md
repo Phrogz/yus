@@ -67,9 +67,10 @@ for team, description, name in extractor.associations:   # "oh, red shorts is ka
 - `advance(now)` takes transcript time, not wall-clock time: the time up to which the ASR has delivered every word. Because
   `feed()` applies the same rule at the start of each group, results do not depend on how often `advance` is called.
 - Streaming and batch give identical events for the same timeout, and final events never change. Tests check this on both
-  transcripts and on 40 random commentaries (with score lines, bare team names, identifications, possessives, accented names
-  and corrections). 3,000 random commentaries, with random `advance()` calls and with and without teams, were also checked
-  once, outside the test suite (68 of them parsed groups again after a correction).
+  transcripts and on 40 random commentaries (with score lines, bare team names, identifications, possessives, accented names,
+  corrections and remarks, and groups whose words share one start time). 3,000 random commentaries with more cue words, with
+  random `advance()` calls and with and without teams, were also checked once, outside the test suite (96 parsed groups again
+  after a correction).
 
 ```python
 from yus.processing.evaluation import score
@@ -124,16 +125,20 @@ result.overall.f1, result.exact.f1, result.fields["receiver"].accuracy, result.r
    - "for" or "on" ending a group joins a team name starting the next one (Whisper's "picks it up for" | "White.").
    - "score" in "what's the score?" or before a score line ("score's five four") is no goal.
 4. **Corrections.** A correction takes back what it contradicts, in the most recent throw. Only provisional events can change.
-   - "not in the end zone", "not in", "not a score": that throw did not score. It stays caught if it was ("caught by
-     somebody").
+   - "not in the end zone", "not a score": that throw did not score. It stays caught if it was ("caught by somebody"). A bare
+     "not in" counts only right after a cue word ("nope, not in", "sorry, it wasn't in"), so "george not in position" and
+     "turtle is not in this point" take nothing back. "Out of the end zone" says nothing (it is where a pickup is taken from).
    - "no score" after a throw that scored: it was a turnover (this commentator says "no score" for every turnover).
    - "sorry, to tristan", "no, wait, to tristan": the receiver. "sorry", "nope", "no", "actually", "wait", "er", "i mean",
      "scratch that" and "my bad" are cue words.
    - "that wasn't joe, that was connor", "not joe, tristan", "sorry, that was connor", "to joe, sorry, tristan": the name, in
      the open throw, the most recent finished event that has it, and who holds the disc. Without "not joe", the new name must
-     be a known one (a roster, a line-up, or an earlier event), so "wait, he stepped out" replaces nobody.
+     be a known one (a roster, a line-up, or an earlier event) right after the cue word, and must end its clause, so "wait,
+     he stepped out", "sorry, kaia, that was a great throw" and "actually, tristan has been great tonight" replace nobody.
+     A rename that would make a thrower his own receiver is no correction ("to joe for the score" | "sorry, kaia").
    - When the throw is already finished, the groups since the state before it are parsed again with the change made when it
-     finishes, so possession and the following events follow it.
+     finishes, so possession and the following events follow it. The change is kept by the event's time and its place in the
+     list, so of two throws Whisper gave one start time, only the one meant changes.
 5. **Associations.** "X is Y" clauses ("oh, red shorts is kaia [on white]", several per sentence) are kept out of the event
    stream and recorded when they identify a roster player (see above). One that stands alone also takes the rest of its
    phrase with it when that holds no event, so "pikachu is killing it tonight" adds no player "tonight".
@@ -216,7 +221,8 @@ session = GameSession(game, descriptions, directory, llm=LLMAssistant("qwen2.5-c
 
   That is 9% of the hand-made transcript's groups and 19–22% of Whisper's.
 - **What the model sees.** The teams, who had the disc, the two groups before, the group, and the rules' events for it,
-  numbered. The throw still open from the group before comes first. A fixed system prompt and five made-up examples come
+  numbered. The throw still open from the group before comes first. A scoring group's events, waiting for this group, are
+  not among them: the model could drop them, and the score with them. A fixed system prompt and five made-up examples come
   first too, and Ollama keeps them cached. The answer is held to a JSON schema: `{"correct":true}`, or the corrected list,
   where `{"same":N}` keeps event N.
 - **Checks.** The rules' events stand when an answer:
@@ -228,6 +234,7 @@ session = GameSession(game, descriptions, directory, llm=LLMAssistant("qwen2.5-c
 - **Live.** The rules' events show at once. The group's events, and everything after them, stay provisional until the
   answer comes or the budget runs out (10 s from the group's arrival). One question is asked at a time.
   - A revision replaces the group's events, and the later groups are parsed again, so a retracted score gives the disc back.
+    A revised scoring group no longer waits: the next group cannot take its score back.
   - Final events never change. With answers released at random moments, the events end as if every answer had been waited
     for (tested on both transcripts).
   - A timeout or an error (Ollama not running) keeps the rules' events. `yus-serve` logs each question and its outcome.
@@ -318,7 +325,10 @@ retracted score as a catch; the model's other gains have not been measured again
   group, or while the throw is still open. Only the most recent throw is corrected: "no score" after a defense says nothing
   about the goal before it. A correction made after `timeout` seconds of silence comes too late.
 - **Corrections not understood:** "for a score, wait, he stepped out" (no phrase for "out"), a correction of the throw type
-  ("dump to killian; a flick dump"), and a bare name after the cue's sentence ("to joe. Sorry. Tristan.").
+  ("dump to killian; a flick dump"), a bare name after the cue's sentence ("to joe. Sorry. Tristan."), and "not joe, tristan,
+  backhand to emily" (a name that starts a throw replaces nobody).
+- **Cue words are also chatter.** "Oh no, tristan!" after "to joe for the score" makes tristan the scorer, and "oh no, he's
+  not in" is no correction only because of "he's".
 - **Roster teams need roster names.** After a false goal, throws among players described only in the descriptions file ("the
   kid", "blondie") keep the wrong team until someone on a roster is named. A Whisper mishearing of a roster name can move a
   throw to the wrong team; the rule never overrides a team just said or a thrower who caught the team's last pass.
