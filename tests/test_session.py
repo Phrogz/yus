@@ -739,6 +739,20 @@ def test_unresolved_names_are_not_resolved_again(game: yus.Game):
         assert snap.unresolved == [(WHITE, "Kaia", 2)] and "Kaia Mann" in snap.unmentioned[WHITE]
 
 
+def test_names_of_the_other_teams_players_are_team_conflicts(game: yus.Game):
+    session = GameSession(game)
+    session.add_commentator("A")
+    session.add_groups("A", spoken((0, "picked up by tristan for black"), (3, "tristan flicks to hot"), (6, "hot to adam")).groups)
+    snap = session.snapshot()
+    assert [(event.team, event.player) for event in snap.official.events] == [(BLACK, "Tristan Weber"), (BLACK, "hot")]
+    assert snap.team_conflicts == {"A": [(0, BLACK, WHITE, "tristan", "Tristan Weber")]}
+    assert snap.unresolved == [(BLACK, "hot", 2)]  # Tristan Weber is no unknown player of black's
+    assert "Tristan Weber" not in snap.unmentioned[WHITE] and "Adam Federbusch" not in snap.unmentioned[BLACK]
+    session.describe("black", ["tristan"], player="Christopher Baines")  # it was black's player after all
+    snap = session.snapshot()
+    assert snap.official.events[0].player == "Christopher Baines" and snap.team_conflicts == {"A": []}
+
+
 def test_snapshots_can_be_copied_and_pickled(game: yus.Game, transcript: yus.Transcript):
     session = GameSession(game)
     replay(session, transcript.model_copy(update={"groups": transcript.groups[:40]}), "A")

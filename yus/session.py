@@ -16,6 +16,7 @@ import collections
 import copy
 import dataclasses
 import datetime as dt
+import functools
 import inspect
 import itertools
 import json
@@ -34,7 +35,7 @@ import pydantic
 
 import yus
 from yus.processing.event_extraction import AssistedExtractor, EventExtractor, LLMAssistant
-from yus.processing.event_unification import GameDescriptions, LiveMerger, MergeResult, PlayerDescription, PlayerResolver, merge_streams
+from yus.processing.event_unification import GameDescriptions, LiveMerger, MergeResult, PlayerDescription, PlayerResolver, TeamConflict, merge_streams
 from yus.processing.event_unification.merge import NAME_FIELDS
 from yus.processing.event_unification.players import mentions, normalize
 from yus.processing.stats import GameStats, compute_stats
@@ -99,8 +100,8 @@ class GameSnapshot:
     `official.events[:settled_count]` are final as far as the commentary goes; later ones are provisional and may change or go.
     A description (`describe()`, or one a commentator speaks) re-resolves names in every event, settled or not. `late` lists the
     merged events left out because a commentator reported them after the play they describe had settled without them.
-    `stats`, `score`, `summary`, `unresolved` and `unmentioned` are computed when first read, then kept. A snapshot can be
-    deep-copied and pickled; `dataclasses.asdict` gives its fields (not the computed ones).
+    `stats`, `score`, `summary`, `unresolved`, `unmentioned` and `team_conflicts` are computed when first read, then kept. A
+    snapshot can be deep-copied and pickled; `dataclasses.asdict` gives its fields (not the computed ones).
     """
 
     version: int
@@ -140,7 +141,8 @@ class GameSnapshot:
     @property
     def unresolved(self) -> list[tuple[str, str, int]]:
         """(team, name, mentions) for each name in the official stream that still needs a person to identify it: names that are
-        not roster players (labels of unknown players, and names nobody described), most mentioned first, as PlayerResolver.unresolved."""
+        not roster players (labels of unknown players, and names nobody described), most mentioned first, as PlayerResolver.unresolved.
+        Names resolved to another team's player are in `team_conflicts` instead."""
         views = self._views
         return views.get("unresolved", lambda: _unresolved(views.official, views.resolver))
 
@@ -149,6 +151,13 @@ class GameSnapshot:
         """Roster players no official event names, per team: likely identities for the unresolved names."""
         views = self._views
         return views.get("unmentioned", lambda: _unmentioned(views.official, views.resolver))
+
+    @functools.cached_property
+    def team_conflicts(self) -> dict[str, list[TeamConflict]]:
+        """Per commentator, the raw events with a name that resolved to another team's player (PlayerResolver.team_conflicts):
+        the event's team is likely wrong, or the name needs a description for its own team."""
+        resolver = PlayerResolver(self.game.teams, self.descriptions)
+        return {name: resolver.team_conflicts(stream, name) for name, stream in self.raw.items()}
 
     @property
     def provisional(self) -> list[yus.Event]:
@@ -809,7 +818,7 @@ def _unresolved(stream: yus.EventStream, resolver: PlayerResolver) -> list[tuple
     forms: dict[tuple[int, str], collections.Counter[str]] = collections.defaultdict(collections.Counter)
     for team, name in mentions(stream):
         index = resolver.team_index(team)
-        if index is not None and name not in resolver.teams[index].players:
+        if index is not None and name not in resolver.teams[index].players and _moved(index, name, resolver) is None:
             forms[(index, normalize(name))][name] += 1
     found = [(resolver.teams[index].names[0], counts.most_common(1)[0][0], counts.total()) for (index, _), counts in forms.items()]
     return sorted(found, key=lambda item: -item[2])
@@ -817,9 +826,23 @@ def _unresolved(stream: yus.EventStream, resolver: PlayerResolver) -> list[tuple
 
 def _unmentioned(stream: yus.EventStream, resolver: PlayerResolver) -> dict[str, list[str]]:
     """PlayerResolver.unmentioned_players of a stream whose names are resolved already."""
-    mentioned = {(resolver.team_index(team), name) for team, name in mentions(stream)}
+    mentioned = set()
+    for team, name in mentions(stream):
+        index = resolver.team_index(team)
+        moved = None if index is None else _moved(index, name, resolver)
+        mentioned.add((index if moved is None else moved, name))
     teams = resolver.teams
     return {team.names[0] if team.names else f"team {i + 1}": [player for player in team.players if (i, player) not in mentioned] for i, team in enumerate(teams)}
+
+
+def _moved(index: int, name: str, resolver: PlayerResolver) -> int | None:
+    """The other team whose player a resolved name in an event of team `index` is: resolution moved it there (a team conflict).
+    A team without a roster keeps its names."""
+    teams = resolver.teams
+    if not teams[index].players or name in teams[index].players:
+        return None
+    found = [i for i, team in enumerate(teams) if i != index and name in team.players]
+    return found[0] if len(found) == 1 else None
 
 
 def _stem(name: str) -> str:

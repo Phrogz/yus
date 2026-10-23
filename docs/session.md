@@ -16,9 +16,9 @@ LiveTranscriber / replay ──groups──> GameSession
 - **Resolution and merging** run in `snapshot()`, only when something changed since the last one.
   - Final raw events are resolved once and cached until a description changes; only the open throw is resolved again.
   - A `LiveMerger` merges the streams when there are two or more commentators.
-- **Stats, unresolved names and unmentioned players** are computed when a snapshot's are first read, then kept. A snapshot
-  whose official stream and settled count are the same as the last one's shares its stats. `compute_stats` takes 7–10 ms,
-  more than the rest of a snapshot put together.
+- **Stats, unresolved names, unmentioned players and team conflicts** are computed when a snapshot's are first read, then
+  kept. A snapshot whose official stream and settled count are the same as the last one's shares its stats. `compute_stats`
+  takes 7–10 ms, more than the rest of a snapshot put together.
 
 ## API
 
@@ -39,7 +39,8 @@ replay(session, transcript_or_json_path, "Gavin", speed=0, on_update=None)   # -
 ```
 
 `GameSnapshot` is a read-only dataclass. Its objects are shared with the session and with later snapshots. It can be
-deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not the computed ones (`stats` to `provisional`).
+deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not the computed ones (`provisional`, and `stats` to
+`team_conflicts`).
 
 | field | |
 |---|---|
@@ -55,7 +56,8 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
 | `descriptions` | every description in effect, in the order recorded: given, described and heard |
 | `stats` | `compute_stats(official, game.teams, provisional_from=settled_count)` |
 | `score`, `summary` | from `stats` |
-| `unresolved`, `unmentioned` | as `PlayerResolver.unresolved` / `unmentioned_players`, over `official`'s names as resolved (not resolved again) |
+| `unresolved`, `unmentioned` | as `PlayerResolver.unresolved` / `unmentioned_players`, over `official`'s names as resolved (not resolved again). A name resolved to another team's player is not unresolved, and counts as mentioned for that team |
+| `team_conflicts` | per commentator name: `PlayerResolver.team_conflicts` of `raw`, `TeamConflict(event, team, roster_team, name, player)`: a name said for one team that only another team's player answers to ("tristan" said for black is white's Tristan Weber). The event keeps its team; a description of the name for its own team clears it |
 
 ### Behaviour
 
