@@ -45,6 +45,8 @@ def brief(event: yus.Event) -> tuple:
     if isinstance(event, ultimate.Throw):
         flags = "".join(c for c, on in (("C", event.completed), ("S", event.scored)) if on)
         return ("Throw", event.team, event.player, event.receiver, flags)
+    if isinstance(event, ultimate.Substitution):
+        return ("Sub", event.team, event.player, event.sub_type.value)
     assert isinstance(event, ultimate.Defense)
     return ("Defense", event.team, event.player, event.intercepted)
 
@@ -193,6 +195,44 @@ def test_answers_may_only_change_what_was_asked_about(teams: list[yus.Team], tex
     assert extractor.events == extract_events(yus.Transcript(groups=groups(*texts)), teams).events
 
 
+WOBBLES = '{"correct":false,"events":[{"kind":"throw","team":"white","player":"kaia","receiver":"joe","type":"flick","result":"caught"}]}'
+
+
+@pytest.mark.parametrize(
+    "said, expected",
+    [
+        ("flick wobbles to joe. tristan off, emily on", [("Throw", "white", "kaia", "joe", "C"), ("Sub", "white", "tristan", "sub_off"), ("Sub", "white", "emily", "sub_on")]),
+        ("tristan off. flick wobbles to joe", [("Sub", "white", "tristan", "sub_off"), ("Throw", "white", "kaia", "joe", "C")]),
+    ],
+)
+def test_substitutions_are_not_shown_and_keep_their_place(teams: list[yus.Team], said: str, expected: list[tuple]):
+    sent: list = []
+    extractor = run(teams, [FIRST, said, "backhand to george"], replying(WOBBLES, seen=sent))
+    assert [call.outcome for call in extractor.calls] == ["revised"]
+    assert [brief(e) for e in extractor.events] == [*expected, ("Throw", "white", "joe", "george", "C")]
+    question = sent[0]["messages"][-1]["content"]
+    assert "2. {" in question and "3. {" not in question and '"kind":"throw"' in question  # the two throws, no substitutions
+    replayed = AssistedExtractor(EventExtractor(teams), None, answers=extractor.answers)  # as GameSession.load does
+    for item in groups(FIRST, said, "backhand to george"):
+        replayed.feed(item)
+    replayed.finish()
+    assert replayed.events == extractor.events
+
+
+def test_a_nope_that_takes_back_a_substitution_keeps_the_group_s_own_events(teams: list[yus.Team]):
+    sent: list = []
+    extractor = run(teams, [FIRST, "dylan off.", "nope. flick wobbles to joe", "backhand to george"], replying(WOBBLES, seen=sent))
+    assert [brief(e) for e in extractor.events] == [("Throw", "white", "kaia", "joe", "C"), ("Throw", "white", "joe", "george", "C")]
+    assert '1. {"kind":"throw","team":"white","player":"kaia","receiver":"wobbles"' in sent[0]["messages"][-1]["content"]
+
+
+def test_substitutions_alone_send_nothing(teams: list[yus.Team]):
+    sent: list = []
+    extractor = run(teams, [FIRST, "sarayan on", "kaia on. sorry, tristan.", "flick to joe"], replying(CONFIRM, seen=sent))
+    assert extractor.calls == [] and sent == []
+    assert [brief(e)[2:] for e in extractor.events] == [("sarayan", "sub_on"), ("tristan", "sub_on"), ("kaia", "joe", "C")]
+
+
 def test_errors_keep_the_rule_events(teams: list[yus.Team]):
     def refused(url: str, body: dict, timeout: float) -> dict:
         raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
@@ -296,9 +336,12 @@ def test_live_answers_revise_events_later_and_final_events_never_change(teams: l
 
 @pytest.mark.parametrize("seed", range(6))
 def test_live_matches_waiting_for_each_answer_on_the_bundled_transcripts(teams: list[yus.Team], seed: int):
-    """Answers released at random moments give the same events as waiting for each, and final events never change."""
+    """Answers released at random moments give the same events as waiting for each, and final events never change; also with
+    substitutions, which revisions keep."""
     rng = random.Random(seed)
-    transcript = yus.Transcript.model_validate_json((DATA / ("gruindoor_20250114T2030-whisper-turbo.json" if seed % 2 else "gruindoor_20250114T2030-transcript.json")).read_text())
+    name = ["gruindoor_20250114T2030-transcript.json", "gruindoor_20250114T2030-whisper-turbo.json", "subbing_20250128T2050-whisper-turbo.json"][seed % 3]
+    transcript = yus.Transcript.model_validate_json((DATA / name).read_text())
+    teams = teams if name.startswith("gruindoor") else []
     items = transcript.groups[:120]
     batch = AssistedExtractor(EventExtractor(teams, timeout=6.0), LLMAssistant("x"), wait=True)
     batch.assistant.ask = lambda request, timeout: drop_new_names(request)  # type: ignore[method-assign, union-attr]

@@ -10,7 +10,8 @@ events:
 - a name that no event used ("dropped by hat");
 - throw words that changed nothing.
 
-The rule events show at once and stay provisional until the answer arrives or `budget` seconds pass. On a timeout, an error, or
+The model sees and revises only throws and defenses: the group's substitutions keep their places among the revised events. The
+rule events show at once and stay provisional until the answer arrives or `budget` seconds pass. On a timeout, an error, or
 an answer that does not check out (an unknown team, a name nobody said), the rule events stand. A revision replaces the group's
 events; later groups are parsed again from there, so a retracted score gives the disc back. Answers are applied by `poll()`,
 `feed()`, `advance()` and `finish()`, never by a background thread, so the extractor needs no lock of its own. See
@@ -81,7 +82,7 @@ class Request:
     teams: list[list[str]]  # each team's names, the event label first
     possession: str | None  # label of the team with the disc before the group
     holder: str | None  # who had the disc before the group, as spoken
-    events: list[yus.Event]  # the rules' events for the group; the first may be a throw still open from before it
+    events: list[yus.Event]  # the rules' throws and defenses for the group; the first may be a throw still open from before it
     open_before: bool  # events[0] started before this group
     open_after: bool  # the last event is a throw the next group may still finish
     reasons: list[str]
@@ -139,21 +140,24 @@ def post_json(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
 def reasons(items: list[Item], before: list[yus.Event], after: list[yus.Event], holder: str | None, knows: Callable[[str], bool], seen: set[str]) -> list[str]:
     """Why the rules' reading of a group may be wrong (empty: send nothing). `items` are the group's parsed items, `before` the
     open events before it (the open throw, if any), `after` its events (the open throw first), `holder` who has the disc after
-    it, `seen` the names of earlier groups' events (normalized)."""
+    it, `seen` the names of earlier groups' events (normalized). Substitutions are not the model's to change: a correction of
+    one alone ("kaia on, sorry, tristan"), or a new name only they use, sends nothing."""
     found: list[str] = []
-    if any(item.tag is Tag.CORRECT or (item.tag is Tag.FILLER and item.text in CORRECTIONS) for item in items):
+    before, plays = _plays(before), _plays(after)
+    throw_words = any(item.tag in THROW_WORDS for item in items)
+    if (plays or throw_words) and any(item.tag is Tag.CORRECT or (item.tag is Tag.FILLER and item.text in CORRECTIONS) for item in items):
         found.append(CORRECTION)
-    names = [name for event in after for name in _names(event)]
+    names = [name for event in plays for name in _names(event)]
     new = [name for name in names if normalize(name) not in seen and not knows(name)]
     if new:
         found.append(f"{NEW_NAME} " + ", ".join(f'"{name}"' for name in dict.fromkeys(new)))
-    if _restated(items, [event for event in after[len(before) :] if isinstance(event, ultimate.Throw)]):
+    if _restated(items, [event for event in plays[len(before) :] if isinstance(event, ultimate.Throw)]):
         found.append(RESTATED)
-    used = {normalize(name) for name in names} | ({normalize(holder)} if holder else set())
+    used = {normalize(name) for event in after for name in _names(event)} | ({normalize(holder)} if holder else set())
     unused = [str(item.value) for item in items if item.tag is Tag.NAME and normalize(str(item.value)) not in used]
     if unused:
         found.append(f"{UNUSED} " + ", ".join(f'"{name}"' for name in dict.fromkeys(unused)))
-    if after == before and any(item.tag in THROW_WORDS for item in items):
+    if plays == before and throw_words:
         found.append(NO_EVENT)
     return found
 
@@ -169,6 +173,32 @@ def _restated(items: list[Item], throws: list[ultimate.Throw]) -> bool:
 
 def _names(event: yus.Event) -> list[str]:
     return [name for name in (getattr(event, "player", None), getattr(event, "receiver", None)) if name]
+
+
+def _plays(events: list[yus.Event]) -> list[yus.Event]:
+    """The throws and defenses of `events`: what the model is shown and may revise."""
+    return [event for event in events if not isinstance(event, ultimate.Substitution)]
+
+
+def _merge(rule: list[yus.Event], plays: list[yus.Event]) -> list[yus.Event]:
+    """A revision's throws and defenses with the substitutions of the rules' events for the group (`rule`) put back among them:
+    each before the first play said after it, or, said at the same moment, in its old place."""
+    subs = collections.deque((len(_plays(rule[:k])), event) for k, event in enumerate(rule) if isinstance(event, ultimate.Substitution))
+    result: list[yus.Event] = []
+    for k, play in enumerate(plays):
+        while subs and (subs[0][1].when < play.when or (subs[0][1].when == play.when and subs[0][0] <= k)):
+            result.append(subs.popleft()[1])
+        result.append(play)
+    return result + [event for _, event in subs]
+
+
+def _kept(earlier: list[yus.Event], now: list[yus.Event]) -> int:
+    """How many of `earlier`, the group before's events still waiting for the next group, are still at the head of `now`, the
+    events from there once it was parsed: a "nope" may have taken back its last substitutions. Corrections keep an event's time."""
+    k = len(earlier)
+    while k and isinstance(earlier[k - 1], ultimate.Substitution) and not (k <= len(now) and (type(now[k - 1]), now[k - 1].when) == (ultimate.Substitution, earlier[k - 1].when)):
+        k -= 1
+    return k
 
 
 # ------------------------------------------------------------------------------------------------------------- prompt and answer
@@ -580,7 +610,7 @@ class AssistedExtractor:
             entry.revision = self.answers[entry.index] = self._known.pop(entry.index)
             entry.asked = entry.rule
             if entry.revision is not None:
-                self.extractor.revise(entry.start, entry.revision)
+                self.extractor.revise(entry.start, _merge(entry.rule, entry.revision))
         elif self.assistant is not None:
             why = reasons(self.extractor.last_items, before, entry.rule, self.extractor.holder, self.extractor.knows, self._seen)
         self._seen.update(normalize(name) for event in entry.rule for name in _names(event))
@@ -637,12 +667,13 @@ class AssistedExtractor:
     def _parse(self, extractor: EventExtractor, entry: _Entry) -> list[yus.Event]:
         """Feed the entry's group to `extractor` with the rules, noting where its events start; returns the open events before it."""
         extractor.advance(entry.group.words[0].start)
-        entry.start = extractor.open_from  # not final_count: a scoring group's events wait there, but they are not this group's
-        before = extractor.events[entry.start :]
+        final, start = extractor.final_count, extractor.open_from  # events[final:start]: the group before's, waiting for this one
+        waiting, before = extractor.events[final:start], extractor.events[start:]
         entry.open_before = bool(before)
         entry.possession = extractor.labels[extractor.possession] if extractor.possession is not None else None
         entry.holder = extractor.holder if not before else getattr(before[0], "player", None)
         extractor.feed(entry.group)
+        entry.start = final + _kept(waiting, extractor.events[final:])
         entry.rule = extractor.events[entry.start :]
         entry.open_after = extractor.open_from < len(extractor.events)
         entry.defense_words = sum(item.tag in (Tag.DEFENSE, Tag.INTERCEPT) for item in extractor.last_items)
@@ -657,7 +688,7 @@ class AssistedExtractor:
             teams=[[label, *[name for name in team.names if normalize(name) != normalize(label)]] for label, team in zip(self.labels, self.teams)],
             possession=entry.possession,
             holder=entry.holder,
-            events=list(entry.rule),
+            events=_plays(entry.rule),
             open_before=entry.open_before,
             open_after=entry.open_after,
             defense_words=entry.defense_words,
@@ -750,7 +781,7 @@ class AssistedExtractor:
                 item.base = extractor.copy()
             self._parse(extractor, item)
             if item.revision is not None and (item is entry or item.asked == item.rule):
-                extractor.revise(item.start, item.revision)
+                extractor.revise(item.start, _merge(item.rule, item.revision))
             elif item.revision is not None:  # the rules now read the group differently: the answer no longer applies
                 item.revision = self.answers[item.index] = None
             if item.advanced is not None:

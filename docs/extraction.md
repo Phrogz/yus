@@ -321,9 +321,12 @@ session = GameSession(game, descriptions, directory, llm=LLMAssistant("qwen2.5-c
   - a name that no event used ("dropped by hat");
   - throw words that changed nothing.
 
-  That is 9% of the hand-made transcript's groups and 19–22% of Whisper's.
+  That is 9% of the hand-made transcript's groups, 19–22% of Whisper's, and 17% (32 of 191) of the subbing transcript's.
+  Substitutions do not count: a name only they use is no new name, and a correction in a group with no throw, defense or
+  throw word ("kaia on. sorry, tristan.") sends nothing.
 - **What the model sees.** The teams, who had the disc, the two groups before, the group, and the rules' events for it,
-  numbered. The throw still open from the group before comes first. A scoring group's events, waiting for this group, are
+  numbered: only throws and defenses. The group's substitutions are not shown, and keep their places in a revision. The
+  throw still open from the group before comes first. A scoring group's events, waiting for this group, are
   not among them: the model could drop them, and the score with them. A fixed system prompt and five made-up examples come
   first too, and Ollama keeps them cached. The answer is held to a JSON schema: `{"correct":true}`, or the corrected list,
   where `{"same":N}` keeps event N.
@@ -442,8 +445,7 @@ retracted score as a catch; the model's other gains have not been measured again
   infraction events are produced.
 - **Substitutions.** Only this commentator's phrasings were seen, all of the form "X off, Y on". Whisper's mishearings of names
   split one player into several ("Sarayan", "Sorayan"), which breaks on-field tracking until the team file lists them. The LLM
-  assistant (`--llm`) cannot describe a substitution to the model yet: `llm.event_json` asserts on one, so `--llm` with
-  substitutions fails.
+  assistant (`--llm`) neither sees nor corrects substitutions.
 - **Old transcripts.** Whisper's "the ends of" for "to the end zone" (twice in dev) is now a mondegreen of the sport
   (`yus/sports/ultimate`), replaced when the transcript is made. A transcript made before that still says "the ends of", and
   the extractor no longer reads it as the end zone.
