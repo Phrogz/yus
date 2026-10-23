@@ -33,6 +33,7 @@ yus-score = "yus.processing.evaluation:main"
 yus-stats = "yus.processing.stats.cli:main"
 yus-serve = "yus.web.server:main"
 yus-replay = "yus.web.replay:main"
+yus-game = "yus.game_cli:main"
 
 [tool.uv]
 package = true
