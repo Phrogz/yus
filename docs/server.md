@@ -16,9 +16,9 @@ browsers: / (score)  /admin (identify names)  /dashboard/ (Dash)  /api/state  <�
 - The transcriber runs in the commentator's own worker thread, so decoding never blocks the event loop. The worker feeds
   everything queued in one call. It hands the session the groups that closed, the open and pending text, and
   `advance(transcriber.horizon)`.
-- A background task runs every second. It advances commentators who are not streaming to the current time, so their open
-  throw becomes final after the session's timeout. It also saves the session every 10 s when it changed, and again at
-  shutdown.
+- A background task runs every second. It advances commentators who are not streaming (stopped, paused, or no frame for
+  2 minutes) to the current time, so their open throw becomes final after the session's timeout and other commentators'
+  events can settle. It also saves the session every 10 s when it changed, and again at shutdown.
 - The Dash app from `yus.web.dashboard` is mounted at `/dashboard/` through `a2wsgi` (see [dashboard.md](dashboard.md)).
 
 ## Running a Game
@@ -91,16 +91,23 @@ treated as secure"). iOS has no such option.
   (`static/pcm-worklet.js`) low-pass filters the audio at the device rate: a 31-tap windowed sinc with its cutoff at 7.2 kHz.
   It then resamples to 16 kHz mono PCM16 by linear interpolation, and posts 100 ms frames.
 - **Frames.** Each frame gets a sequence number and the capture time of its first sample. The capture time is the start
-  time plus the samples captured since, so it runs on the audio clock.
+  time plus the samples captured since, so it runs on the audio clock and a busy page that gets frames late does not move it.
+  When the audio clock stood still for more than 1 s longer than the wall clock (the context was suspended), or the context
+  left the running state, the start time is taken again from `Date.now()`, so audio after a pause is stamped when it was
+  captured.
 - **Kept until acknowledged.** Frames stay on the phone until the server acknowledges them, up to 5 minutes (9.6 MB); after
   that the oldest are dropped. After a dropped connection the page reconnects with backoff (0.5 s, doubling, at most 5 s). It
   resends what the server has not acknowledged, in order, holding back while more than 512 KB are queued in the socket. A
-  page that hears nothing for 8 s reconnects.
+  page that hears nothing for 8 s (or whose socket has not opened after 8 s) drops that socket and connects again at once:
+  it does not wait for the browser to close it, which takes a minute after a network drop that sent no reset.
+- **Pauses.** When the audio context is suspended, or no frame came for 3 s, the page sends `{"type": "pause"}` once,
+  after everything captured. The server then commits the last words and stops waiting for this commentator.
 - **What it shows.** The connection state, a level meter, the last 8 transcript groups with the pending text, the
   commentator's last 6 events (provisional ones in italics), and the score.
 - **Problems it reports:** "Audio paused" when the audio context is suspended (no user gesture, a phone call, the page in
-  the background), and a tap anywhere resumes it; "No sound from the microphone" after 3 s without frames; a page opened
-  without HTTPS; refusals from the server.
+  the background), and a tap anywhere resumes it (on `touchend` and `click`, which iOS counts as gestures, and
+  `pointerdown`); "No sound from the microphone" after 3 s without frames; a page opened without HTTPS; refusals from the
+  server. After close codes 1003, 1008, 4000 and 4403 it stops rather than reconnecting.
 - **Screen.** A Screen Wake Lock keeps the screen on while live, and is requested again when the page comes back.
 - Name and team are remembered in `localStorage`.
 - It needs iOS 14.5 or newer (AudioWorklet). The wake lock needs iOS 16.4 or newer; without it the page asks the commentator
@@ -114,7 +121,8 @@ treated as secure"). iOS has no such option.
 2. Server: `{"type": "welcome", "commentator", "focus_team", "ack": <last frame taken, -1 for none>, "stream"}`.
 3. Binary frames: `<uint32 sequence number><float64 capture time, ms since 1970 on the phone's clock>` (little-endian), then
    mono PCM16 samples. A malformed frame gets an error and close code 1003.
-4. Text `{"type": "stop"}`: the commentator stopped. The segment ends and the transcriber commits every word.
+4. Text `{"type": "stop"}` (the commentator stopped) or `{"type": "pause"}` (their audio paused): the segment ends and the
+   transcriber commits every word. Frames after a pause start a new segment.
 5. Server, every 0.25 s when something changed and at least every 2 s: `{"type": "update", "ack", "live", "busy",
    "received_s", "backlog_s", "error"}`. When the session's version changed, the update also carries `version`, `finished`,
    `summary`, `score`, `transcript` (`[{time, text}]`), `pending` and `events` (`[{index, type, time, clock, team, text,
@@ -124,22 +132,26 @@ treated as secure"). iOS has no such option.
 - Frames whose sequence number was already taken are dropped.
 - The server's clock minus the phone's (`client_time`) is measured at each hello. A segment's first sample is stamped with its
   capture time plus that offset, as a naive local time like `yus-transcribe`'s.
+- Times that cannot be right are not used. An offset of more than a day counts as 0. A capture time more than a day from
+  the server's clock (after the offset), or missing, is taken as continuing the segment, or with none open, as just captured.
 - Later frames continue the segment by sample count while their capture time is within 1 s of where the last frame ended.
   A gap of up to 5 s (lost frames) is filled with silence.
-- A segment ends on a longer gap, a jump back in time, `stop`, a new `stream` id or sample rate, or 2 minutes disconnected.
-  Each segment has its own transcriber and its own WAV file.
+- A segment ends on a longer gap, a jump back in time, `stop` or `pause`, a new `stream` id or sample rate, or 2 minutes
+  without a frame, connected or not. Each segment has its own transcriber and its own WAV file.
 
-**Connections.** A second connection for the same name replaces the first, which gets close code 4000: the newest
-connection wins, for example a phone that reconnected before its old socket timed out. Close code 4403 means the key is
-missing.
+**Connections.** A second connection for the same name replaces the first: the newest connection wins, for example a phone
+that reconnected before its old socket timed out. Nothing more is taken from the old connection, not even a frame already
+on its way, and it gets an error and close code 4000. Close code 4403 means the key is missing; the socket is accepted
+first, because browsers report a refused handshake only as 1006.
 
 ## HTTP API
 
 - `GET /api/state?events=20`: `version`, `finished`, `summary`, `score`, `sport`, `when`, `teams` (`name`, `names`,
   `players`), `event_count`, `settled_count`, the last `events` official events (`-1` for all), `unresolved`
   (`[{team, name, mentions}]`), `unmentioned` (`{team: [players]}`), `descriptions`, and `commentators`. Each commentator has
-  `CommentatorState`'s fields plus `connected`, `live`, `received_s`, `backlog_s`, `segments` and `error`. Everything but
-  `commentators` is cached per version and per `events`.
+  `CommentatorState`'s fields plus `connected`, `live`, `received_s`, `backlog_s`, `segments` and `error` (the transcriber's
+  last error, until it next works). Everything but `commentators` is cached per version and per `events`. A negative
+  `events`, or one past the number of events, means all of them.
 - `POST /api/describe` with `{"team", "descriptions": [...] | "...", "player"?, "label"?, "commentator"?}`: calls
   `GameSession.describe` and returns `{"description", "version"}`. Earlier events are resolved again. Bad input gets 400
   `{"error"}`.
@@ -195,11 +207,17 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
 - **Audio.**
   - Uplink: 256 kbit/s per phone plus 12 bytes per frame.
   - Disk: 1.9 MB per minute (30.7 MB for the game).
+- **Review fixes**, with the reviewer's probes (headless Chrome, uvicorn):
+  - A network drop that leaves the socket half-open: the page was on a new socket after 8.3 s, not 68.5 s.
+  - Two phones streaming under one name: in 10 of 10 runs the newer phone lost no frames (before: 8–11 lost in 8 of 10),
+    and the older one was closed with 4000.
+  - An 8 s suspend, then a tap: the last frame's capture end was 57 ms behind the phone's clock (before: 8,056 ms), and the
+    audio after it was a second segment.
 - **Downsampler** (node, unit sines):
   - 440 Hz and 3 kHz pass at 48 and 44.1 kHz, within 0.15 dB.
   - 12 kHz, which would alias to 4 kHz, comes out at RMS 0.001 (−57 dB) from 48 kHz.
   - In headless Chrome, a 0.5-amplitude 440 Hz tone at 44.1 kHz reached the transcriber at 16 kHz with its RMS within 2%.
-- **Tests.** `tests/test_server.py`, 6 s:
+- **Tests.** `tests/test_server.py`, 10 s:
   - pages and static files;
   - hello and frames through to groups, events and `/api/state`, with timestamps on the server's clock;
   - a reconnect continuing the same segment, with resent frames dropped;
@@ -207,20 +225,27 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
   - idle advancing;
   - `/api/describe` resolving names again;
   - saving at shutdown, then resuming with `--load`;
-  - refused hellos, replaced connections, `/api/finish`, the key;
+  - refused hellos, replaced connections (a frame on its way is not taken), `/api/finish`, the key (4403 after the
+    handshake, redirects that stay on the server);
+  - pauses and silent connected phones ending their segment; phone times that cannot be right; the `/api/state` cache;
+    a transcription error clearing;
   - the dashboard mount (a fake, and the real `yus.web.dashboard`);
   - `yus-replay` against a real uvicorn server;
-  - `node --check` of the page scripts, and the downsampler.
+  - `node --check` of the page scripts, and the downsampler;
+  - the commentate page's script in node with a stub DOM: capture times across a busy page and a pause, the pause message,
+    reconnecting at once from a silent socket, resuming audio on `touchend`/`click`, stopping on 1003.
 
   With `YUS_SLOW_TESTS=1` and Chrome installed, it also drives the real commentate page in headless Chrome. Chrome's fake
-  capture device hangs `getUserMedia` on macOS, so the page gets a synthetic microphone. The test covers tap to resume, live
-  audio, a dropped connection and reconnect, and stop.
+  capture device hangs `getUserMedia` on macOS, so the page gets a synthetic microphone. The test covers a touch tap to
+  resume (it fails with the old `pointerdown`-only listener), live audio, a dropped connection and reconnect, a suspend that
+  ends the segment and a tap that starts the next at the right time, and stop.
 
 ## Limitations
 
 - **Not tried on phones.** The commentate page was tried only in desktop headless Chrome, with a synthetic microphone; it
   has not been tried in iOS Safari or Android Chrome. iOS stops capturing when Safari goes to the background or the screen
-  locks. The page reports silence, but cannot prevent it.
+  locks. The page reports silence, but cannot prevent it. If iOS also stops the page's scripts, the page cannot send
+  `pause`, and the server ends that commentator's segment only after 2 minutes without a frame.
 - **Whisper not run through the server.** The live latency and accuracy in
   [live_transcription.md](live_transcription.md#accuracy-and-latency) apply: words are committed about 6 s after they are
   spoken.
@@ -228,14 +253,16 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
   decode). Two will nearly fill it, and with more, each transcriber decodes less often and falls further behind. Watch
   `backlog_s` and the transcript lag.
 - **Long outages.**
-  - After 2 minutes disconnected, a commentator's segment ends and they are advanced to the current time. Audio resent
-    later starts a new segment, and its words can come before that advance, which can unsettle events (the session's
-    "progress is trusted").
+  - After 2 minutes without a frame, connected or not, a commentator's segment ends and they are advanced to the current
+    time. The server cannot tell a phone that paused without saying so from a network outage, so it does not do this
+    sooner. Audio resent later starts a new segment, and its words can come before that advance, which can unsettle events
+    (the session's "progress is trusted").
   - Past 5 minutes offline, the phone drops its oldest audio.
 - **Clocks.**
   - The phone's clock offset is measured once per connection, without correcting for network delay (tens of ms on a LAN).
-  - The capture time comes from `Date.now()` at the first frame, and the audio clock's drift against it is not corrected
-    (usually well under 1 s an hour).
+  - The capture time comes from `Date.now()` at the first frame and after each pause. The audio clock's drift against it
+    is not corrected (usually well under 1 s an hour); an audio clock slower than the wall clock by more than 1 s in all
+    is taken for a pause, which pads about 1 s of silence.
   - Idle commentators are advanced on the server's wall clock. With `yus-replay --speed` above 1, audio time runs ahead of
     it, which is harmless.
 - **Names and access.**
