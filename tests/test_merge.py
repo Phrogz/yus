@@ -228,6 +228,55 @@ def test_grammar_repairs_what_one_commentator_got_wrong(game: yus.Game):
     assert agreed.stream.events[2].scored and not [c for c in agreed.conflicts if c.event == 2]
 
 
+def heard_as_two(truth: list[yus.Event], gap: float, completed: bool = True) -> tuple[yus.EventStream, yus.EventStream, int]:
+    """Two commentators of the ground-truth game, as in the end-to-end runs: white's goal at 154 s ("flick huck to kaia in the
+    end zone for a score") was "Flick hot to Kaia Mann" for the white-focus commentator, a catch by "hot" and hot's throw to
+    Kaia `gap` seconds later, which the extractor took as dropped since black picked up next; the dark-focus commentator's
+    "Flick hock Kaia Mann. And the end's on first score" was the score. The second clock is 5 s ahead."""
+    goal = next(i for i, e in enumerate(truth) if isinstance(e, ultimate.Throw) and e.scored and e.when.time() == datetime.time(20, 33, 7))
+    a, b = list(truth), [e.model_copy(update={"when": e.when + datetime.timedelta(seconds=5), "team": B_TEAMS[getattr(e, "team")]}) for e in truth]
+    split = {"when": truth[goal].when + datetime.timedelta(seconds=gap), "player": "hot", "receiver": "Kaia Mann", "completed": False, "scored": False}
+    a[goal : goal + 1] = [truth[goal].model_copy(update={"receiver": "hot", "completed": completed, "scored": False}), truth[goal].model_copy(update=split)]
+    b[goal] = b[goal].model_copy(update={"receiver": "hock"})
+    return stream(*a), stream(*b), goal
+
+
+def goals(events: list[yus.Event]) -> list[int]:
+    return [sum(getattr(e, "scored", False) and normalize(getattr(e, "team")) in names for e in events) for names in ({"white", "dump and drizzle"}, {"black", "category 5"})]
+
+
+def test_a_score_one_commentator_heard_stands(game: yus.Game, truth: list[yus.Event]):
+    def merged(a: yus.EventStream, b: yus.EventStream) -> MergeResult:
+        return merge_streams([a, b], focus=["white", "dark"], teams=game.teams, offsets=[0.0, -5.0])
+
+    a, b, goal = heard_as_two(truth, 0.56)
+    result = merged(a, b)
+    assert goals(result.stream.events) == goals(truth) == [14, 9]
+    assert [(c.field, c.values, c.chosen, c.rule) for c in result.conflicts if c.event == goal][-1] == ("scored", [False, True], True, "score")
+    assert result.stream.events[goal + 1].player == "hot"  # the throw heard twice stays, as heard
+    assert merged(a, stream(*b.events[: goal + 1])).stream.events[goal].scored is False  # the dark-focus commentator's next event isn't in yet
+    later = merged(*heard_as_two(truth, 2.0)[:2])  # 2 s later, hot's throw is likelier real, and the dark-focus commentator missed it
+    assert goals(later.stream.events) == [13, 9]
+    dropped = merged(*heard_as_two(truth, 0.56, completed=False)[:2])  # the white-focus commentator said it was dropped
+    assert goals(dropped.stream.events) == [13, 9] and ("scored", "focus") in [(c.field, c.rule) for c in dropped.conflicts if c.event == goal]
+
+
+def test_a_score_heard_as_two_settles_when_its_reporter_goes_on(game: yus.Game, truth: list[yus.Event]):
+    """Whether the score stands depends on the reporter's next event: here the dark-focus commentator, 15 s behind, says
+    nothing more until black scores 15 s later. Meanwhile, the score is not settled, though `settle` alone would settle it."""
+    a, b, goal = heard_as_two(truth, 0.56)
+    b = stream(*(e for k, e in enumerate(b.events) if k <= goal or getattr(e, "scored", False) or e.when > b.events[goal].when + datetime.timedelta(seconds=20)))
+    final = merge_streams([a, b], focus=["white", "dark"], teams=game.teams, offsets=[0.0, -5.0])
+    assert final.stream.events[goal].scored and final.settled > goal
+    held = 0
+    for until in range(150, 260):
+        prefix = [stream(*(e for e in s.events if (e.when - truth[0].when).total_seconds() <= until - late)) for s, late in ((a, 0), (b, 5 + 15))]
+        result = merge_streams(prefix, focus=["white", "dark"], teams=game.teams, offsets=[0.0, -5.0])
+        assert result.stream.events[: result.settled] == final.stream.events[: result.settled], until
+        held += result.settled == goal and not result.stream.events[goal].scored
+    assert held >= 2  # measured 2: settled stops before it until the reporter goes on
+
+
 def test_a_defense_goes_after_the_throw_it_stopped(game: yus.Game):
     a = stream(throw(0, "white", "Kaia Mann", "Joe Oaks", completed=False), throw(8, "black", "Adam Federbusch", "George Abuhamad"))
     b = stream(defense(-0.4, "dark", "Zach Ehler"))  # said a little early

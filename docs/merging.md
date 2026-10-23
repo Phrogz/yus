@@ -22,14 +22,19 @@ disagree on details such as who caught the disc, the throw type, or whether it w
    details agree. Matching names add to it and different roster names subtract from it; so do throw type, outcome, and above
    all a score both reported. Streams after the second are aligned to the events merged so far.
 3. **Fields.** A known value beats an unknown one (`None`, or `False` for flags like `hit_wall`). If known values disagree:
-   a roster player beats a description label, then the commentator whose `focus` is the event's team wins, then the
-   majority, then, on a tie, the earliest stream among the tied values. A merged event's time is the mean of its aligned times.
+   a roster player beats a description label, a score beats silence (a catch nobody else called a score; saying it was not
+   caught is no silence), then the commentator whose `focus` is the event's team wins, then the majority, then, on a tie, the
+   earliest stream among the tied values. A merged event's time is the mean of its aligned times.
 4. **Game grammar** (`repair=True`):
    - Two neighbouring events from different streams are swapped when the game says the other order fits better, such as a
      Defense said just before the throw it stopped, or a pass placed after the score that ended the possession.
    - Then each throw's outcome is made to agree with what follows: a Defense by the other team means incomplete; the same team
      throwing next means completed and not scored; a score is a catch.
    - An outcome that several commentators agreed on is never overridden, because an event they all missed is likelier.
+   - A score that one commentator reported and another was silent on stands against that other commentator's next throw by
+     the same team when it came less than 1 s (`SAME_BREATH`) after their report of the scoring throw, and the reporter's next
+     event has the other team with the disc. Such a throw is one throw heard as two: in the end-to-end runs, "flick huck to
+     kaia in the end zone for a score" became "Flick hot to Kaia Mann", a catch by "hot" and hot's dropped throw.
 
 ## API
 
@@ -40,7 +45,7 @@ result = merge_streams(resolved_streams, focus=["white", None], teams=game.teams
 result.stream      # yus.EventStream, time-ordered; teams named by their official (first) name when `teams` is given
 result.offsets     # seconds added to each stream to align it to the first, e.g. [0.0, -6.42]
 result.pairs       # per merged event, the index of its source event in each input stream (or None)
-result.conflicts   # Conflict(event, field, values per stream, chosen, rule: roster|focus|majority|earliest|grammar)
+result.conflicts   # Conflict(event, field, values per stream, chosen, rule: roster|score|focus|majority|earliest|grammar)
 result.links       # NameLink suggestions, e.g. stream 1's "specs" (team "light") is "glasses"
 result.settled     # the first `settled` events are final; result.provisional marks the rest
 ```
@@ -63,7 +68,8 @@ before the first event that:
 
 - is later than `settle` + `tolerance` seconds before the latest input event (a new event could pair with it);
 - may still be reordered, because the group after it is not settled yet;
-- is a throw whose next throw is not settled yet, since the grammar repair reads it.
+- is a throw whose next throw is not settled yet, since the grammar repair reads it;
+- is a score heard as two (above) that waits for the reporter's next event, while only the other team has the disc.
 
 An estimated offset can move with more events, so a stream whose offset is estimated holds settling back: before its first
 event less 26.25 s (`max_offset` + 2 × `tolerance` + 0.25 s), or, while it has no events, a further `max_offset` back. A
@@ -136,6 +142,13 @@ changed and `settled` never decreased. With the late starter, the first stream's
 Most split-mode score errors are goals that neither commentator reported in full. The rest come from cross-reports without names,
 which can pair with the neighbouring throw.
 
+**A score heard as two.** Both real two-commentator runs ([results.md](results.md)) lost white's goal at 154 s, as above.
+Re-merged with the session's offsets, both now score it (white 14, was 13; truth 14–9), with the same event F1 and exact F1
+(0.968 / 0.796 and 0.975 / 0.793), and live re-merges as events arrive changed no settled event. The synthetic results above are
+unchanged: their commentators never hear one throw as two. Without the 1 s limit, against any later throws of the team, a
+mistaken score stood 10 times in the 80 synthetic games, and exact final scores fell from 60% to 52% (dual) and 22% to 18%
+(split). In the ground truth, one commentator's consecutive throws are at least 0.8 s apart.
+
 ## Limitations
 
 - **Synthetic evaluation only.** The noise model (Gaussian jitter, independent misses and flips) is an assumption, and no
@@ -144,8 +157,10 @@ which can pair with the neighbouring throw.
   `LiveMerger` stream whose offset is never kept holds settling back from its first event on. Within a stream, clock drift is
   followed only as `LiveMerger`'s offsets for later events; batch offsets are constant.
 - **Missed events.** An event that every commentator missed stays missing. The grammar assumes nothing was missed between two
-  throws, except that it never overrides an outcome several commentators agree on. A single report saying both "scored" and
-  "incomplete" is taken as a catch.
+  throws, except that it never overrides an outcome several commentators agree on, or a score against a throw heard as two.
+  A single report saying both "scored" and "incomplete" is taken as a catch.
+- **Extra events stay.** The second half of a throw heard as two stays in the merged stream, after the goal, as heard.
+  Events can't say "no score", so silence and "no score" are told apart only by whether the catch was reported.
 - **Labels for unknown players** that differ between commentators are not unified automatically; `links` only suggests them.
 - **Timing.**
   - Merged times are means, nudged where needed to keep the order.

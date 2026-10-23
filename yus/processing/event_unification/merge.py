@@ -6,10 +6,12 @@ before stats. Each commentator's clock may be off, each misses some events, and 
      then refines it from the events it pairs;
   2. pairs events that describe the same action with a monotone alignment (every stream keeps its order): events of the same
      type and team within `tolerance` seconds, scored by closeness in time and agreement of names, throw type and outcome;
-  3. merges the fields of paired events: a known value beats an unknown one, a roster player beats a description label, then
-     the commentator focusing on the event's team wins, then the majority, then the earliest stream;
+  3. merges the fields of paired events: a known value beats an unknown one, a roster player beats a description label, a
+     score beats silence (a catch nobody called a score), then the commentator focusing on the event's team wins, then the
+     majority, then the earliest stream;
   4. repairs contradictions with the game's grammar: possession continues iff a throw was completed and not scored, and a
-     Defense follows an incomplete throw by the other team.
+     Defense follows an incomplete throw by the other team. A score one commentator reported stands against another's report
+     of the same team throwing on within a second, when the reporter's next event has the other team with the disc.
 
 It is a pure function of its inputs and takes a few milliseconds for a whole game, so live use re-merges the streams so far
 whenever an event arrives. Merged events well before the latest input event (`settle` seconds, plus what pairing, reordering
@@ -38,12 +40,13 @@ from yus.processing.event_unification import players
 from yus.sports import ultimate
 
 Value = str | bool | None
-Rule = Literal["roster", "focus", "majority", "earliest", "grammar"]
+Rule = Literal["roster", "score", "focus", "majority", "earliest", "grammar"]
 
 NAME_FIELDS = ("player", "receiver")
 normalize = functools.lru_cache(maxsize=4096)(players.normalize)
 OFFSET_BIN = 0.25  # seconds per bin of the offset histogram
 TIME_WEIGHT, TIME_ZERO = 2.0, 0.6  # pair score for events at the same time; fraction of tolerance at which time alone scores 0
+SAME_BREATH = 1.0  # seconds: one commentator's two throws closer than this may be one heard as two (true ones are 0.8 s+ apart)
 
 
 class Conflict(pydantic.BaseModel):
@@ -53,7 +56,7 @@ class Conflict(pydantic.BaseModel):
     field: str = pydantic.Field(..., description='The field, e.g. "receiver" or "completed".')
     values: list[Value] = pydantic.Field(..., description="Each input stream's value (None where the stream has no event here).")
     chosen: Value = pydantic.Field(..., description="The merged value.")
-    rule: Rule = pydantic.Field(..., description="What settled it: roster name over description, team focus, majority, earliest stream, or game grammar.")
+    rule: Rule = pydantic.Field(..., description="What settled it: roster name over description, a score over silence, team focus, majority, earliest stream, or game grammar.")
 
 
 class NameLink(pydantic.BaseModel):
@@ -457,11 +460,17 @@ def _merge_fields(items: list[_Item], ctx: _Context) -> tuple[yus.Event, dict[st
             continue
         chosen, rule = known[0][1], None
         if len({_key(value) for _, value in known}) > 1:
-            chosen, rule = _settle(field, known, team, ctx)
+            chosen, rule = (True, "score") if field == "scored" and _score_over_silence(items) else _settle(field, known, team, ctx)
             disputes[field] = rule
         if chosen != getattr(base, field):
             update[field] = chosen
     return (base.model_copy(update=update) if update else base), disputes
+
+
+def _score_over_silence(items: list[_Item]) -> bool:
+    """Whether some items report a score and the rest are silent on it: a catch, not called a score. Saying it was not caught
+    (or a commentator's own "no score", which events can't record) contradicts the score instead."""
+    return all(getattr(item.event, "completed", False) for item in items)
 
 
 def _settle(field: str, known: list[tuple[int, Value]], team: str | None, ctx: _Context) -> tuple[Value, Rule]:
@@ -491,8 +500,9 @@ def _finish(streams: list[yus.EventStream], groups: list[_Group], offsets: list[
     events = [_finish_event(group, ctx) for group in groups]
     disputes = [dict(group.disputes) for group in groups]
     if repair:
-        _repair_outcomes(events, groups, disputes, ctx)
+        reads = _repair_outcomes(events, groups, disputes, ctx)
         fixed = next((p for p in range(fixed - 1, -1, -1) if isinstance(events[p], ultimate.Throw)), fixed)  # a throw depends on what follows, up to the next throw
+        fixed = min([fixed, *(p for p, last in reads.items() if last >= fixed)])  # a reported score, up to its reporter's next event
     for i in range(1, len(events)):
         if events[i].when < events[i - 1].when:
             events[i] = events[i].model_copy(update={"when": events[i - 1].when})
@@ -561,11 +571,14 @@ def _fit(a: yus.Event | None, b: yus.Event | None, ctx: _Context) -> float:
     return 0.0
 
 
-def _repair_outcomes(events: list[yus.Event], groups: list[_Group], disputes: list[dict[str, Rule]], ctx: _Context) -> None:
+def _repair_outcomes(events: list[yus.Event], groups: list[_Group], disputes: list[dict[str, Rule]], ctx: _Context) -> dict[int, int]:
     """Make each throw's outcome agree with what follows it: a Defense by the other team next means incomplete; the same team
     throwing next (with no Defense between) means completed and not scored; a score is a catch. An outcome that several
-    commentators agreed on is kept (an event they all missed is likelier). Repairs are recorded as "grammar" disputes."""
+    commentators agreed on is kept (an event they all missed is likelier), and so is a score some reported and others were
+    silent on, against a throw that is one of theirs heard as two (see `_heard_as_two`). Repairs are recorded as "grammar"
+    disputes. Returns, for each such score, the last event that decided it (len(events) when a reporter has none yet)."""
     throws = [i for i, event in enumerate(events) if isinstance(event, ultimate.Throw)]
+    reads: dict[int, int] = {}
     for n, p in enumerate(throws):
         throw = events[p]
         assert isinstance(throw, ultimate.Throw)
@@ -575,6 +588,9 @@ def _repair_outcomes(events: list[yus.Event], groups: list[_Group], disputes: li
             want = {"completed": False, "scored": False}
         elif following < len(events) and _same_team(events[following], throw, ctx) and not defenses:
             want = {"completed": True, "scored": False}
+            if disputes[p].get("scored") == "score":
+                split, reads[p] = _heard_as_two(p, following, events, groups, ctx)
+                want = {} if split else want
         else:  # the other team throws next, or had the disc between (a Defense by this team), or the stream ends
             want = _turnover_or_score(throw, disputes[p], following < len(events) or bool(defenses))
         agreed = len(groups[p].items) > 1
@@ -582,6 +598,36 @@ def _repair_outcomes(events: list[yus.Event], groups: list[_Group], disputes: li
         if want:
             events[p] = throw.model_copy(update=want)
             disputes[p].update(dict.fromkeys(want, "grammar"))
+    return reads
+
+
+def _heard_as_two(p: int, following: int, events: list[yus.Event], groups: list[_Group], ctx: _Context) -> tuple[bool, int]:
+    """Whether the same team's throw at `following` is the throw at `p` heard as two: one commentator reported it within
+    SAME_BREATH of their report of `p`, which they didn't call a score, and a commentator who did next reports the other team
+    with the disc, with only single reports of that between. Also returns the last event that tells."""
+    extra = groups[following].items
+    silent = [item for item in groups[p].items if len(extra) == 1 and item.stream == extra[0].stream and not getattr(item.event, "scored", True)]
+    if not silent or extra[0].raw - silent[0].raw >= SAME_BREATH:
+        return False, following
+    last = following
+    for stream in {item.stream for item in groups[p].items if getattr(item.event, "scored", False)}:
+        q = following + 1
+        while q < len(events) and stream not in _streams(groups[q]) and len(groups[q].items) == 1 and _hands_over(events[p], events[q], ctx):
+            q += 1
+        if q < len(events) and stream in _streams(groups[q]) and _hands_over(events[p], events[q], ctx):
+            return True, q
+        last = max(last, q)
+    return False, last
+
+
+def _streams(group: _Group) -> set[int]:
+    return {item.stream for item in group.items}
+
+
+def _hands_over(throw: yus.Event, event: yus.Event, ctx: _Context) -> bool:
+    """Whether `event` has the other team with the disc after `throw`: its throw, or a Defense by the thrower's team."""
+    same = _same_team(event, throw, ctx)
+    return (isinstance(event, ultimate.Throw) and not same) or (isinstance(event, ultimate.Defense) and same)
 
 
 def _turnover_or_score(throw: ultimate.Throw, disputes: dict[str, Rule], possession_changes: bool) -> dict[str, bool]:
