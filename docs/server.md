@@ -46,6 +46,7 @@ descriptions and has a "Finish game" button.
 | `--model` | default `large-v3-turbo` |
 | `--key KEY` | require a shared key: open links once with `?key=KEY` (it is then kept in a cookie). Use it whenever the server is reachable from outside your network |
 | `--no-audio` | do not save audio |
+| `--llm MODEL [--llm-url URL] [--llm-budget S]` | also send groups the rules may have misread to a local Ollama model (off by default; see [extraction.md](extraction.md#llm-assistance)) |
 
 `yus-replay` streams an audio file to a running server as a phone would. It is for demos and end-to-end tests:
 

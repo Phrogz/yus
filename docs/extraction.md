@@ -18,7 +18,7 @@ no color name. `PlayerResolver.team_index` and the scorer accept any of a team's
 ## Command line
 
 ```bash
-yus-events game.transcript.json --team white.json --team dark.json [-o game.events.json] [--timeout 6]
+yus-events game.transcript.json --team white.json --team dark.json [-o game.events.json] [--timeout 6] [--llm MODEL [--llm-url URL] [--llm-budget S]]
 yus-score game.events.json [--gt truth.json] [--team T.json ...] [--resolve | --descriptions D.json] [--start T] [--stop T] [--shift FROM TO] [-v] [--json]
 ```
 
@@ -161,6 +161,109 @@ about 7.7 s median for the live sliding window. The "first shown" columns are fo
   0 s costs 0.07–0.2.
 - **CPU** (M3 Pro, Python 3.13): `feed()` plus `events` takes a median of 18–22 µs per group. That is about 5–5.5 ms for the
   whole 16-minute game. Building an extractor takes 0.35 ms.
+
+## LLM assistance
+
+`llm.AssistedExtractor` gives the groups the rules may have misread a second reading by a local model served by Ollama. It is
+**off by default** (see [the decision](#decision-off-by-default)); `--llm MODEL` turns it on in `yus-events` and `yus-serve`.
+
+```python
+stream = extract_events(transcript, teams, llm=LLMAssistant("qwen2.5-coder:14b"))   # waits for each answer, up to the budget
+extractor = AssistedExtractor(EventExtractor(teams, timeout=6.0), LLMAssistant("qwen2.5-coder:14b"))   # live: never waits
+session = GameSession(game, descriptions, directory, llm=LLMAssistant("qwen2.5-coder:14b", url="http://localhost:11434", budget=10))
+```
+
+- **What is sent.** The rules parse every group first. A group also goes to the model when it has:
+  - a correction word ("nope", "sorry", "actually", "no", "not", "wait");
+  - a name in an event that no team file or line-up knows, said for the first time;
+  - a throw without a receiver, then one without a thrower in the same sentence ("flick put huck close crop");
+  - a name that no event used ("dropped by hat");
+  - throw words that changed nothing.
+
+  That is 9% of the hand-made transcript's groups and 19–22% of Whisper's.
+- **What the model sees.** The teams, who had the disc, the two groups before, the group, and the rules' events for it,
+  numbered. The throw still open from the group before comes first. A fixed system prompt and five made-up examples come
+  first too, and Ollama keeps them cached. The answer is held to a JSON schema: `{"correct":true}`, or the corrected list,
+  where `{"same":N}` keeps event N.
+- **Checks.** The rules' events stand when an answer:
+  - breaks the schema, names a team that does not play, or uses a name nobody said;
+  - adds a defense without a defense word;
+  - changes more than its reason allows. A new name allows changing the events that name it, and merging the throw it
+    split. A restated throw allows merging the pair. A correction allows anything. An unused name allows changing events.
+    Only throw words that made no event allow adding one.
+- **Live.** The rules' events show at once. The group's events, and everything after them, stay provisional until the
+  answer comes or the budget runs out (10 s from the group's arrival). One question is asked at a time.
+  - A revision replaces the group's events, and the later groups are parsed again, so a retracted score gives the disc back.
+  - Final events never change. With answers released at random moments, the events end as if every answer had been waited
+    for (tested on both transcripts).
+  - A timeout or an error (Ollama not running) keeps the rules' events. `yus-serve` logs each question and its outcome.
+  - A hung Ollama makes each group sent wait out its budget. The installed Ollama app's server once stopped answering
+    while this was built; a separately started `ollama serve` worked.
+  - It needs the 9 GB model loaded; the assistant asks Ollama to keep it for 30 minutes after each question.
+- **Saved.** `answers` records each decision. `GameSession.save()` keeps them in `session.json`, and `load()` replays them
+  without asking again.
+
+### Measured
+
+These runs used an M3 Pro, Ollama 0.5.4, and only the models already installed. Cells show event F1 / exact F1; Whisper names
+are resolved with the descriptions file.
+
+| transcript | rules | + qwen2.5-coder:14b | + llama3.2 (3B) |
+|---|---|---|---|
+| hand-made, dev | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 / 1.000 |
+| hand-made, test | 0.990 / 0.904 | 0.995 / 0.966 | 0.995 / 0.899 |
+| Whisper one pass, dev | 0.990 / 0.948 | 0.990 / 0.938 | 0.990 / 0.896 |
+| Whisper one pass, test | 0.990 / 0.798 | 0.990 / 0.846 | 0.971 / 0.767 |
+| 18 rephrased snippets, all events right | 5 | 12 | 7 |
+
+- **Hand-made test.** qwen fixed the retracted score, and with it the next four events' team. It also dropped "power" as a
+  thrower and merged the restated throw. The checks rejected its answers for "across" and "bobbled", which merged away a catch.
+- **Whisper dev.** It turned "Flick the yellow line" into receiver "yellow line", where the rules' "the yellow" was right.
+- **Snippets.** The 18 snippets are passives, reversed order, corrections, restatements and words taken for names, none
+  from this game. qwen still misses "wobbles" and "sails" as names, "nice grab by joe off a backhand from kaia", and
+  retracted scores, which it reads as incomplete throws.
+- **Time per question** (alone on the GPU): a median of 1.8 s, mostly confirmations. A revision takes 5–6 s and the longest
+  10 s. llama3.2 takes 0.4–0.5 s, but its answers are worse.
+- **Determinism.** Answers vary a little from run to run even at temperature 0: one Whisper correction came back
+  "incomplete" in earlier runs and "caught" in the last.
+
+**Live, end to end.** `yus-serve` with mlx Whisper, and `yus-replay` of the real audio in real time, one commentator, with
+and without `--llm qwen2.5-coder:14b`. Both runs were made the same evening (compare [results.md](results.md)).
+
+| | without | with |
+|---|---|---|
+| event F1 / exact F1 | 0.975 / 0.792 | 0.975 / 0.786 |
+| ... dev; test | 0.964 / 0.821; 0.986 / 0.766 | 0.969 / 0.812; 0.981 / 0.762 |
+| ... the same live transcript, rules only | | 0.980 / 0.800 |
+| final score (truth 14–9) | 14–11 | 13–10 (rules only: 14–10) |
+| groups sent | | 47 of 218: 41 confirmed, 3 revised, 3 timed out |
+| question time: median / p90 / max | | 3.0 / 9.0 / 10.0 s |
+| speech to settled: median / p90 / max | 11.0 / 15.2 / 27.7 s | 12.4 / 19.5 / 31.8 s |
+| Whisper decode: median / p90 / max | 1.44 / 1.55 / 2.33 s | 1.46 / 1.94 / 3.59 s |
+| GPU busy: Whisper; LLM | 50% | 52%; 18% |
+
+- **Waiting for every answer on both live transcripts** (no timeouts, current checks): one went from 0.980 / 0.800 to
+  0.975 / 0.795, the other stayed at 0.975 / 0.792, and white lost a goal in both.
+- **Live groups are short and noisy.** "Gloves taps a dad." became a throw to "dad" before the checks stopped new events for
+  unused names.
+- **The retracted score.** Live, "Blade in the end zone? Nope, not in the end zone. Caught by somebody." came back as an
+  incomplete throw on both transcripts. That removes the false goal but still gives the disc away, so white's next real goal
+  still goes to black.
+
+### Decision: off by default
+
+On the bundled transcripts it improves held-out exact F1 (+0.06 hand-made, +0.05 Whisper) without hurting event F1. It still
+stays off, because:
+
+- **It does not help live.** On the same live transcripts it is neutral or slightly worse (event and exact F1 −0.005).
+- **It costs time.** Settling takes 1.4 s longer at the median and 4.3 s longer at p90. 3 of 47 answers missed the 10 s
+  budget, among them two useful fixes, and Whisper's decodes slow by 0.4 s at p90.
+- **There is no GPU to spare with two commentators.** Whisper alone keeps the GPU 97–99% busy ([results.md](results.md)).
+- **The test halves were not blind.** The triggers target the error kinds listed under [Limitations](#limitations), which
+  came from the test half. The prompt avoids this game's phrases, but the test gains are optimistic.
+
+It is worth trying again with a faster model of the 14b's quality, on a machine with GPU to spare, or once retracted scores
+come back as catches.
 
 ## Limitations
 

@@ -25,7 +25,7 @@ LiveTranscriber / replay ──groups──> GameSession
 ```python
 from yus.session import GameSession, replay
 
-session = GameSession(game, descriptions, directory)   # descriptions and directory optional; timeout=6.0 keyword
+session = GameSession(game, descriptions, directory)   # descriptions and directory optional; timeout=6.0, llm=None keywords
 session.add_commentator("Gavin", focus_team=None)      # focus_team: any team name, for merge conflicts
 session.add_groups("Gavin", groups)                    # TranscriptGroups, in order; copies are kept
 session.set_pending_text("Gavin", transcriber.pending_text)
@@ -99,6 +99,11 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
 - **Threads.** Every method takes one lock. `snapshot()` holds it for a median of 0.1 ms with one commentator and 2 ms with
   two (up to 24 ms when the merge re-estimates an offset). Stats are computed outside it, on first read, under the
   snapshot's own lock.
+- **LLM assistance** (`llm=LLMAssistant(...)`, off by default; see [extraction.md](extraction.md#llm-assistance)). Each
+  commentator's extractor is an `AssistedExtractor`. Answers arrive on a worker thread and are applied by `add_groups()`,
+  `advance()` and `snapshot()`, which then bump `version`. A group awaiting its answer holds back `final_count` (at most the
+  budget, 10 s). `finish()` waits for the answers still due, up to their budgets. `GameSession.load(directory, llm=...)`
+  replays the saved answers without asking again; `llm` answers the groups to come.
 - **Commentators** are merged in the order they were added; the first is the clock reference. Add every commentator before
   feeding groups. A commentator added later starts a new merge (when they are the second) or joins it (later ones). Either way
   `settled_count` can drop and settled events can change.
@@ -120,7 +125,7 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
 | `transcripts/<commentator>.json` | that commentator's `Transcript` (the name made file-safe: `B / Other` → `B_Other`) |
 | `events/<commentator>.json` | raw `EventStream`, as `yus-events` writes it (`yus-score`, `yus-stats` read it) |
 | `official.json` | the official `EventStream` |
-| `session.json` | version, timeout, finished, commentators (file, focus, pending text, last `advance`), associations heard, the merger's state |
+| `session.json` | version, timeout, finished, commentators (file, focus, pending text, last `advance`, LLM answers), associations heard, the merger's state |
 
 File names differ even on a disk that ignores case and Unicode normalization (macOS): `Gavin` and `gavin` get `Gavin.json`
 and `gavin-2.json`.
