@@ -604,14 +604,15 @@ def _repair_outcomes(events: list[yus.Event], groups: list[_Group], disputes: li
 def _heard_as_two(p: int, following: int, events: list[yus.Event], groups: list[_Group], ctx: _Context) -> tuple[bool, int]:
     """Whether the same team's throw at `following` is the throw at `p` heard as two: one commentator reported it within
     SAME_BREATH of their report of `p`, which they didn't call a score, and a commentator who did next reports the other team
-    with the disc, with only single reports of that between. Events that don't tell who has the disc (a Substitution) are
-    skipped. Also returns the last event that tells."""
+    with the disc, with only single reports of that between. Until such a reporter has reported anything more, it is taken to
+    be (a session may settle it in a pause). Events that don't tell who has the disc (a Substitution) are skipped. Also
+    returns the last event that tells (len(events) while a reporter has none)."""
     extra = groups[following].items
     silent = [item for item in groups[p].items if len(extra) == 1 and item.stream == extra[0].stream and not getattr(item.event, "scored", True)]
     if not silent or extra[0].raw - silent[0].raw >= SAME_BREATH:
         return False, following
     last = following
-    for stream in {item.stream for item in groups[p].items if getattr(item.event, "scored", False)}:
+    for stream in sorted({item.stream for item in groups[p].items if getattr(item.event, "scored", False)}):
         q = following + 1
         while q < len(events):
             if isinstance(events[q], (ultimate.Throw, ultimate.Defense)):
@@ -622,7 +623,7 @@ def _heard_as_two(p: int, following: int, events: list[yus.Event], groups: list[
                     break
             q += 1
         last = max(last, q)
-    return False, last
+    return last == len(events), last
 
 
 def _streams(group: _Group) -> set[int]:

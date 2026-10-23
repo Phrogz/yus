@@ -254,7 +254,9 @@ def test_a_score_one_commentator_heard_stands(game: yus.Game, truth: list[yus.Ev
     assert goals(result.stream.events) == goals(truth) == [14, 9]
     assert [(c.field, c.values, c.chosen, c.rule) for c in result.conflicts if c.event == goal][-1] == ("scored", [False, True], True, "score")
     assert result.stream.events[goal + 1].player == "hot"  # the throw heard twice stays, as heard
-    assert merged(a, stream(*b.events[: goal + 1])).stream.events[goal].scored is False  # the dark-focus commentator's next event isn't in yet
+    assert merged(a, stream(*b.events[: goal + 1])).stream.events[goal].scored is False  # its reporter says no more, and white throws again
+    pending = merged(stream(*a.events[: goal + 2]), stream(*b.events[: goal + 1]))  # nobody has said more yet: a pause after the goal
+    assert pending.stream.events[goal].scored and pending.settled <= goal  # shown, provisional (a session may settle it in the pause)
     later = merged(*heard_as_two(truth, 2.0)[:2])  # 2 s later, hot's throw is likelier real, and the dark-focus commentator missed it
     assert goals(later.stream.events) == [13, 9]
     dropped = merged(*heard_as_two(truth, 0.56, completed=False)[:2])  # the white-focus commentator said it was dropped

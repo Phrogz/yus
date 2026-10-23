@@ -35,6 +35,8 @@ disagree on details such as who caught the disc, the throw type, or whether it w
      the same team when it came less than 1 s (`SAME_BREATH`) after their report of the scoring throw, and the reporter's next
      throw or Defense has the other team with the disc. Such a throw is one throw heard as two: in the end-to-end runs, "flick
      huck to kaia in the end zone for a score" became "Flick hot to Kaia Mann", a catch by "hot" and hot's dropped throw.
+     Until a commentator reports more play after it, the score stands, provisional: a session that settles events in a pause
+     (see [session.md](session.md#behaviour)) then keeps it.
 
 ## API
 
@@ -150,7 +152,9 @@ mistaken score stood 10 times in the 80 synthetic games, and exact final scores 
 (split). In the ground truth, one commentator's consecutive throws are at least 0.8 s apart. Re-merging every 0.5 s, with
 most goals of the game heard as two (gaps of 0.4–1.5 s, either commentator silent) and the reporter lagging 0, 6 or 15 s, no
 settled event changed and `settled` never decreased (4 seeds). In 20 such games, every goal heard as two under 1 s apart was
-kept, and every one 1.5 s apart lost.
+kept, and every one 1.5 s apart lost. A `GameSession` whose reporter said nothing for 18 s after such a goal used to settle it,
+in the pause, as no score; the score now shows while undecided, so it settles as a score. Re-feeding the two real runs to a
+session at the times their groups arrived gave the same result as before (14–9; no settled event changed).
 
 ## Limitations
 
