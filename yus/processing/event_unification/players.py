@@ -6,8 +6,11 @@ merged or stats computed, this step rewrites them, per stream and per team, as:
      the name (full name, nickname, or mondegreen; else a first or last name unique on the team);
   2. one label per unknown player, when this game's descriptions group several descriptions of the same unknown person
      ("yellow border", "yellow fringe" -> "yellow sleeve"); describing the label later identifies the whole group;
-  3. otherwise the name as spoken.
-`unresolved()` lists 2 and 3, so that a person can identify them.
+  3. a player of another team, when no player of the event's team answers to the name and just one of another team does (by
+     the same rules; a description only for the team it was given for): the event's team is likely wrong, and
+     `team_conflicts()` lists such events;
+  4. otherwise the name as spoken.
+`unresolved()` lists 2 and 4, so that a person can identify them.
 
 Team files hold only what is true of a player in every game. What one commentator called someone in one game belongs in that
 game's `GameDescriptions`, which can grow during the game. Resolution is a pure function of the raw events, the rosters, and the
@@ -20,7 +23,7 @@ from __future__ import annotations
 import collections
 import re
 import unicodedata
-from typing import TypeVar
+from typing import NamedTuple, TypeVar
 
 import pydantic
 
@@ -66,11 +69,21 @@ class GameDescriptions(pydantic.BaseModel):
     players: list[PlayerDescription] = []
 
 
+class TeamConflict(NamedTuple):
+    """A name said for one team that resolves to a player of another: the event's team (or the name) is likely wrong."""
+
+    event: int  # index of the event in the stream
+    team: str  # the event's team, by its first name
+    roster_team: str  # the team of the player the name resolved to, by its first name
+    name: str  # the name as said
+
+
 class PlayerResolver:
     """Resolves spoken player names for one game, from its team rosters and its descriptions.
 
     resolver = PlayerResolver(game.teams, descriptions)
     resolved = resolver.resolve_stream(raw_stream)   # raw_stream is left unchanged
+    resolver.team_conflicts(raw_stream)   # events whose names resolved to another team's player
     resolver.describe("white", ["red shorts"], player="Kaia Mann")   # learned mid-game
     resolved = resolver.resolve_stream(raw_stream)   # earlier "red shorts" events now say Kaia Mann
     path.write_text(resolver.descriptions.model_dump_json(indent=2))   # keep what was learned with the game
@@ -117,17 +130,18 @@ class PlayerResolver:
         return self._team_index.get(normalize(team)) if team else None
 
     def resolve(self, name: str | None, team: str | None, commentator: str | None = None) -> str | None:
-        """The player (or unknown player's label) that `name` means on `team`, or `name` itself when it can't be resolved."""
-        found = self._lookup(name, team, commentator)
+        """The player (or unknown player's label) that `name` means on `team`, or `name` itself when it can't be resolved. Only
+        `team` is searched; resolving an event also tries the other teams."""
+        found = self._lookup(name, self.team_index(team), commentator)
         return name if found is None else found
 
     def resolve_event(self, event: E, commentator: str | None = None) -> E:
-        """A copy of `event` with its player (and receiver, for throws) resolved."""
+        """A copy of `event` with its player (and receiver, for throws) resolved. A name that no player of the event's team
+        answers to, and just one player of another team does, resolves to that player (see `team_conflicts`)."""
         if not isinstance(event, ultimate.UltimateEvent):
             return event.model_copy()
-        update = {"player": self.resolve(event.player, event.team, commentator)}
-        if isinstance(event, ultimate.Throw):
-            update["receiver"] = self.resolve(event.receiver, event.team, commentator)
+        index = self.team_index(event.team)
+        update = {field: self._resolve(getattr(event, field), index, commentator)[0] for field in _name_fields(event)}
         return event.model_copy(update={field: value for field, value in update.items() if value != getattr(event, field)})
 
     def resolve_stream(self, stream: yus.EventStream, commentator: str | None = None) -> yus.EventStream:
@@ -137,16 +151,29 @@ class PlayerResolver:
         events = [self.resolve_event(event, commentator) for event in stream.events]
         return yus.EventStream(game=stream.game, transcript=stream.transcript, events=events)
 
+    def team_conflicts(self, stream: yus.EventStream, commentator: str | None = None) -> list[TeamConflict]:
+        """The events of a raw stream with a name that resolved to another team's player, in stream order (one entry per name):
+        the event's team is likely wrong, or the name misheard."""
+        commentator = self._commentator(stream, commentator)
+        found = []
+        for i, event in enumerate(stream.events):
+            index = self.team_index(getattr(event, "team", None))
+            for name in (getattr(event, field) for field in _name_fields(event)):
+                if index is not None and (other := self._resolve(name, index, commentator)[1]) is not None:
+                    found.append(TeamConflict(i, self._team_name(index), self._team_name(other), name))
+        return found
+
     def unresolved(self, stream: yus.EventStream, commentator: str | None = None) -> list[tuple[str, str, int]]:
         """(team, name, mentions) for each name that still needs a person to identify it, most mentioned first: names neither a
-        roster player nor described, and labels of described but unknown players. Teams are given by their first name; names that
-        normalize alike ("kid", "the kid") are counted together under their most common form."""
+        player nor described, and labels of described but unknown players. Teams are given by their first name; names that
+        normalize alike ("kid", "the kid") are counted together under their most common form. Names that resolved to another
+        team's player are in `team_conflicts` instead."""
         commentator = self._commentator(stream, commentator)
         forms: dict[tuple[int, str], collections.Counter[str]] = collections.defaultdict(collections.Counter)
         for team, name in mentions(stream):
             index = self.team_index(team)
-            resolved = self.resolve(name, team, commentator)
-            if index is not None and resolved is not None and resolved not in self.teams[index].players:
+            resolved, other = self._resolve(name, index, commentator)
+            if index is not None and other is None and resolved is not None and resolved not in self.teams[index].players:
                 forms[(index, normalize(resolved))][resolved] += 1
         found = [(self._team_name(index), counts.most_common(1)[0][0], counts.total()) for (index, _), counts in forms.items()]
         return sorted(found, key=lambda item: -item[2])
@@ -154,21 +181,37 @@ class PlayerResolver:
     def unmentioned_players(self, stream: yus.EventStream, commentator: str | None = None) -> dict[str, list[str]]:
         """Roster players no event resolves to, per team (first team name): likely identities for the unresolved names."""
         commentator = self._commentator(stream, commentator)
-        mentioned = {(self.team_index(team), self.resolve(name, team, commentator)) for team, name in mentions(stream)}
+        mentioned = set()
+        for team, name in mentions(stream):
+            resolved, other = self._resolve(name, index := self.team_index(team), commentator)
+            mentioned.add((index if other is None else other, resolved))
         return {self._team_name(i): [p for p in team.players if (i, p) not in mentioned] for i, team in enumerate(self.teams)}
 
-    def _lookup(self, name: str | None, team: str | None, commentator: str | None) -> str | None:
-        index = self.team_index(team)
+    def _resolve(self, name: str | None, index: int | None, commentator: str | None) -> tuple[str | None, int | None]:
+        """The name resolved for team `index`, and the index of another team when it resolved to that team's player instead:
+        when nobody on team `index` answers to it, and just one player of all the other teams does."""
+        answers = self._answers(name, index, commentator)
+        if answers or name is None or index is None:
+            return (next(iter(answers)) if len(answers) == 1 else name), None
+        others = [(player, j) for j in range(len(self.teams)) if j != index for player in self._answers(name, j, commentator)]
+        return others[0] if len(others) == 1 and others[0][0] in self.teams[others[0][1]].players else (name, None)
+
+    def _lookup(self, name: str | None, index: int | None, commentator: str | None) -> str | None:
+        answers = self._answers(name, index, commentator)
+        return next(iter(answers)) if len(answers) == 1 else None
+
+    def _answers(self, name: str | None, index: int | None, commentator: str | None) -> set[str]:
+        """Whom `name` may mean on team `index`: the player (or label) the descriptions give, else the roster players that answer
+        to it, from the first tier that has any."""
         if name is None or index is None:
-            return None
+            return set()
         found = self._described_as(index, normalize(name), commentator)
         if found is not None:
             if found.player is None and (named := self._described_as(index, normalize(found.name), commentator)) and named.player:
-                return named.player  # the unknown player's label has since been identified
-            return found.name
+                return {named.player}  # the unknown player's label has since been identified
+            return {found.name}
         exact, partial = self._roster[index]
-        players = exact.get(normalize(name)) or partial.get(normalize(name), set())
-        return next(iter(players)) if len(players) == 1 else None
+        return exact.get(normalize(name)) or partial.get(normalize(name), set())
 
     def _described_as(self, team: int, key: str, commentator: str | None) -> PlayerDescription | None:
         records = self._described.get((team, key), [])
@@ -199,6 +242,12 @@ def roster_aliases(team: yus.Team) -> tuple[dict[str, set[str]], dict[str, set[s
             if len(part) > 1:
                 partial[part].add(player)
     return exact, partial
+
+
+def _name_fields(event: yus.Event) -> tuple[str, ...]:
+    if isinstance(event, ultimate.Throw):
+        return ("player", "receiver")
+    return ("player",) if isinstance(event, ultimate.UltimateEvent) else ()
 
 
 def mentions(stream: yus.EventStream) -> list[tuple[str, str]]:

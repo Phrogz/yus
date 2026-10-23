@@ -274,12 +274,19 @@ descriptions resolve through a per-game description file, which can be filled in
 - `commentator` - apply only to that commentator's streams (default: all). A commentator's own entry beats a shared one;
   otherwise later entries win.
 
+A description applies only to its `team`. When no player of an event's team answers to a name (by roster or description),
+and just one player of the other team does, the name resolves to that player: the commentator, or the extractor, likely put the
+event on the wrong team. `team_conflicts()` lists those events for the caller to correct or flag; the events keep their team.
+In the two-commentator end-to-end runs, each commentator's stream had 3 to 5 such names, all right: "Deed by Joe" given to
+dark, and white's passes after a turnover was missed. Merged, 1–3 more players and 2 more receivers were right.
+
 ```python
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
 
 resolver = PlayerResolver(game.teams, GameDescriptions.model_validate_json(path.read_text()))
 resolved = resolver.resolve_stream(raw_stream)    # pass commentator=... for a stream loaded from JSON
 resolver.unresolved(raw_stream)                   # [("Dump & Drizzle", "glasses", 32), ...] still needing a person
+resolver.team_conflicts(raw_stream)               # [TeamConflict(event=41, team="Category 5", roster_team="Dump & Drizzle", name="joe"), ...]
 resolver.unmentioned_players(raw_stream)          # roster players nobody has named: the likely identities
 resolver.describe("white", ["glasses"], player="Ari Weissman")   # learned live (hypothetical here); re-resolve to fix earlier events
 path.write_text(resolver.descriptions.model_dump_json(indent=2))  # keep what was learned with the game
