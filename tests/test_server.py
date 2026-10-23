@@ -2,6 +2,7 @@ import contextlib
 import datetime as dt
 import itertools
 import json
+import math
 import os
 import pathlib
 import re
@@ -134,6 +135,24 @@ def receive_until(ws, condition: Callable[[dict], bool], timeout: float = 10.0) 
         if condition(message):
             return message
     raise AssertionError("no such message")
+
+
+def until_closed(ws, timeout: float = 5.0) -> tuple[list[dict], int]:
+    """The messages the server sends `ws` until it closes it, and the close code."""
+    messages, codes = [], []
+
+    def read():
+        try:
+            while True:
+                messages.append(ws.receive_json())
+        except WebSocketDisconnect as closed:
+            codes.append(closed.code)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert codes, f"the socket was not closed; messages: {messages}"
+    return messages, codes[0]
 
 
 def test_pages_are_served(game):
@@ -310,17 +329,111 @@ def test_hellos_that_are_refused(game):
 
 
 def test_a_newer_connection_replaces_the_older(game):
-    server = make_server(game, None, Factory())
+    factory = Factory()
+    server = make_server(game, None, factory)
     with client_for(server) as client, client.websocket_connect("/ws/audio") as old:
-        old.send_json(hello())
+        old.send_json(hello(stream="A"))
         old.receive_json()
+        send_audio(old, 0, 20)
+        receive_until(old, lambda m: m.get("ack") == 19)
         with client.websocket_connect("/ws/audio") as new:
-            new.send_json(hello())
-            assert new.receive_json()["type"] == "welcome"
-            assert receive_until(old, lambda m: m["type"] == "error")["message"].startswith("Replaced")
-            send_audio(new, 0, 5)
+            new.send_json(hello(stream="B"))  # another phone under the same name
+            assert new.receive_json()["ack"] == -1
+            old.send_bytes(frame(20, NOW * 1000 + 2000))  # the old phone's next frame, already on its way: not taken
+            messages, code = until_closed(old)
+            assert messages[-1]["message"].startswith("Replaced") and code == 4000  # the page gives up rather than taking the name back
+            send_audio(new, 0, 5, start_ms=NOW * 1000 + 3000, value=2000)
             receive_until(new, lambda m: m.get("ack") == 4)
         assert server.streams["Gavin"].connection is None
+    audio = np.concatenate([np.concatenate(t.feeds) for t in factory.made])
+    assert np.sum(np.isclose(audio, 1000 / 32768)) == 20 * 1600 and np.sum(np.isclose(audio, 2000 / 32768)) == 5 * 1600
+
+
+def test_pausing_or_going_silent_ends_the_segment(game, tmp_path):
+    now = [NOW]
+    factory = Factory(PHRASES[:3])
+    server = make_server(game, tmp_path, factory, clock=lambda: now[0], idle_after=20)
+    stream = None
+    with client_for(server) as client, client.websocket_connect("/ws/audio") as ws:
+        ws.send_json(hello())
+        ws.receive_json()
+        send_audio(ws, 0, 30)
+        update = receive_until(ws, lambda m: m.get("ack") == 29 and len(m.get("transcript", [])) == 3)
+        assert update["events"][-1]["provisional"]
+        ws.send_json({"type": "pause"})  # the phone's audio was suspended: its last words are committed
+        stream = server.streams["Gavin"]
+        wait_until(lambda: factory.made[0].flushed and not stream.busy)
+        now[0] = NOW + 10
+        update = receive_until(ws, lambda m: m.get("events") and not m["events"][-1]["provisional"])  # advanced while connected
+        send_audio(ws, 30, 10, start_ms=NOW * 1000 + 7000)  # resumed 7 s later: a new segment, at the time it was captured
+        receive_until(ws, lambda m: m.get("ack") == 39 and m.get("live"))
+        assert len(factory.made) == 2 and factory.made[1].start == dt.datetime.fromtimestamp(NOW + 10)
+        now[0] = NOW + 15
+        time.sleep(0.1)
+        assert stream.next_ms is not None  # still connected, nothing heard for 5 s: the segment stays open
+        now[0] = NOW + 31  # nothing heard for longer than idle_after, though connected (a phone that could not say it paused)
+        wait_until(lambda: factory.made[1].flushed)
+        assert stream.connected and stream.segments == 2
+
+
+def test_phone_times_that_cannot_be_right_are_not_used(game):
+    factory = Factory()
+    server = make_server(game, None, factory)
+    with client_for(server) as client:
+        for name, client_time, capture in [
+            ("Wild", -1e300, 1e300),  # neither can be right: the frame was just captured
+            ("Seconds", NOW, NOW * 1000),  # client time in seconds, not ms: ignored; the capture time is right
+            ("Behind", NOW * 1000 - 7_200_000, NOW * 1000 - 7_200_000),  # a phone clock 2 h behind: corrected
+        ]:
+            with client.websocket_connect("/ws/audio") as ws:
+                ws.send_json(hello(name=name, client_time=client_time))
+                ws.receive_json()
+                ws.send_bytes(frame(0, capture))
+                ws.send_bytes(frame(1, math.nan))  # no capture time: continues
+                receive_until(ws, lambda m: m.get("ack") == 1)
+    starts = {name: t.start for name, t in zip(["Wild", "Seconds", "Behind"], factory.made, strict=True)}
+    assert starts == {"Wild": dt.datetime.fromtimestamp(NOW - 0.1), "Seconds": dt.datetime.fromtimestamp(NOW), "Behind": dt.datetime.fromtimestamp(NOW)}
+    assert all(t.samples == 2 * 1600 for t in factory.made)
+
+
+def test_state_cache_stays_small(game, tmp_path):
+    server = make_server(game, tmp_path, Factory())
+    with client_for(server) as client:
+        with client.websocket_connect("/ws/audio") as ws:
+            ws.send_json(hello())
+            ws.receive_json()
+            send_audio(ws, 0, 60)
+            receive_until(ws, lambda m: m.get("ack") == 59 and len(m.get("transcript", [])) == 6)
+        wait_until(lambda: not server.streams["Gavin"].busy)
+        count = client.get("/api/state?events=0").json()["event_count"]
+        assert count >= 3
+        everything = client.get("/api/state?events=-1").json()["events"]
+        for n in (-7, count, 10**12, *range(10**6, 10**6 + 50)):
+            assert client.get(f"/api/state?events={n}").json()["events"] == everything
+        assert len(client.get("/api/state?events=2").json()["events"]) == 2
+        assert set(server._state_cache) == {-1, 0, 2}
+
+
+def test_a_transcription_error_clears_when_it_works_again(game):
+    factory = Factory()
+    failing = [True]
+
+    def make(start, sample_rate):
+        transcriber = factory(start, sample_rate)
+        feed = transcriber.feed
+        transcriber.feed = lambda samples: (_ for _ in ()).throw(RuntimeError("boom")) if failing[0] else feed(samples)
+        return transcriber
+
+    server = GameServer(GameSession(build_game()), make, clock=lambda: NOW, tick=0.02)
+    with client_for(server) as client, client.websocket_connect("/ws/audio") as ws:
+        ws.send_json(hello())
+        ws.receive_json()
+        send_audio(ws, 0, 5)
+        assert receive_until(ws, lambda m: m.get("error"))["error"] == "RuntimeError: boom"
+        failing[0] = False
+        send_audio(ws, 5, 15)
+        receive_until(ws, lambda m: m.get("ack") == 19 and not m["busy"] and m["error"] is None)
+        assert client.get("/api/state").json()["commentators"][0]["error"] is None
 
 
 def test_a_failing_view_does_not_end_updates(game, monkeypatch):
@@ -392,6 +505,9 @@ def test_key_is_required_when_set(game):
         assert response.status_code == 303 and response.headers["location"] == "/api/state?events=0"
         assert "samesite=lax" in response.headers["set-cookie"].lower()  # kept when the link was opened from another app
         assert client.get("/api/state?events=0").status_code == 200  # the cookie
+        for path, location in [("//example.com/", "/example.com/"), ("/\\example.com/", "/%5Cexample.com/")]:  # the redirect stays here
+            response = client.get(f"http://testserver{path}?key=sesame", follow_redirects=False)
+            assert response.status_code == 303 and response.headers["location"] == location, path
         client.cookies.clear()
         with pytest.raises(WebSocketDisconnect) as closed, client.websocket_connect("/ws/audio") as ws:
             ws.receive_json()
@@ -458,6 +574,17 @@ def test_replay_streams_audio_to_a_running_server(game, tmp_path):
     assert (tmp_path / "session.json").exists()
 
 
+def test_a_socket_without_the_key_is_closed_with_4403(game):
+    """Browsers see only 1006 for a refused handshake, so the socket is accepted and then closed with the code."""
+    from websockets.exceptions import ConnectionClosed
+    from websockets.sync.client import connect
+
+    with running(create_app(make_server(game, None), dashboard=False, key="sesame")) as url, connect(url, open_timeout=5) as ws:
+        with pytest.raises(ConnectionClosed) as closed:
+            ws.recv(timeout=5)
+        assert closed.value.rcvd.code == 4403
+
+
 def test_replay_frames():
     samples = np.array([0.5, -0.5, 1.0, -1.0, 0.0], dtype=np.float32)
     (first, second) = list(replay.frames(samples, 1000.0, frame_s=3 / 16000))
@@ -498,12 +625,129 @@ def test_downsampler_keeps_speech_and_removes_aliases():
         assert levels[f"{rate}/12000"][1] < 0.01  # would alias to 4 kHz: at least 37 dB down
 
 
+# commentate.js in a node vm with a stub DOM, a settable clock (clock.now) and fake sockets; prints the steps' value as JSON.
+PAGE = """
+const vm = require("vm"), fs = require("fs");
+const clock = { now: 1768000000000 }, sockets = [], listeners = {}, intervals = [], elements = {};
+class FakeDate extends Date { static now() { return clock.now; } }
+class FakeSocket {
+  constructor(url) { Object.assign(this, { url, readyState: 0, sent: [], closed: false, bufferedAmount: 0 }); sockets.push(this); }
+  send(data) { this.sent.push(data); }
+  close() { this.closed = true; this.readyState = 2; }
+}
+Object.assign(FakeSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+const element = () => ({ value: "", textContent: "", style: {}, classList: { add() {}, remove() {} }, addEventListener() {}, focus() {}, replaceChildren() {}, append() {} });
+const page = {
+  Date: FakeDate, WebSocket: FakeSocket, clock, sockets, listeners, intervals,
+  document: {
+    getElementById: (id) => (elements[id] ||= element()), addEventListener: (type, f) => (listeners[type] ||= []).push(f),
+    createElement: element, createTextNode: () => ({}),
+  },
+  navigator: {}, location: { protocol: "https:", host: "game.test" }, localStorage: { getItem: () => "", setItem() {} },
+  setInterval: (f) => intervals.push(f), setTimeout() {}, fetch: () => new Promise(() => {}),
+};
+page.window = page;
+vm.createContext(page);
+vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), page);
+vm.runInContext(`
+  function frame() { onFrame({ pcm: new Int16Array(1600).buffer, level: 0 }); }
+  function tick() { intervals.forEach((f) => f()); }
+  function open(ws) { ws.readyState = WebSocket.OPEN; ws.onopen(); ws.onmessage({ data: JSON.stringify({ type: "welcome", ack: -1 }) }); }
+  function kinds(ws) { return ws.sent.map((m) => (typeof m === "string" ? JSON.parse(m).type : "frame")); }
+`, page);
+console.log(JSON.stringify(vm.runInContext(process.argv[2], page)));
+"""
+
+
+def run_page(steps: str):
+    result = subprocess.run([NODE, "-e", PAGE, str(STATIC / "commentate.js"), f"(() => {{ {steps} }})()"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_page_capture_times_follow_pauses():
+    """Capture times count samples, so they survive a busy page; when the audio clock stops (suspended), they start again."""
+    steps = """
+    const ctx = { state: "running", currentTime: 0, baseLatency: 0.01 };
+    const play = (ms) => { clock.now += ms; ctx.currentTime += ms / 1000; };
+    Object.assign(state, { audio: { ctx }, live: true });
+    for (let i = 0; i < 5; i++) { play(100); frame(); }
+    play(2000);  // the page was busy for 2 s: the audio went on, and its frames arrive at once
+    for (let i = 0; i < 20; i++) frame();
+    clock.now += 8000;  // suspended for 8 s: the audio clock stopped
+    for (let i = 0; i < 2; i++) { play(100); frame(); }
+    const times = state.frames.map((f) => new DataView(f.data).getFloat64(4, true));
+    return { steps: times.slice(1).map((t, i) => Math.round(t - times[i])), behind: Math.round(clock.now - times[times.length - 1] - 100) };
+    """
+    result = run_page(steps)
+    assert result == {"steps": [100] * 24 + [8100, 100], "behind": 10}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_page_tells_the_server_when_audio_pauses():
+    steps = """
+    const ctx = { state: "running", currentTime: 0, baseLatency: 0 };
+    ui.name.value = "Gavin";
+    Object.assign(state, { audio: { ctx }, live: true, wantSocket: true, lastFrame: clock.now });
+    connect();
+    const ws = sockets[0];
+    open(ws);
+    frame();
+    ctx.state = "suspended";
+    tick(); tick();
+    ctx.state = "running";
+    clock.now += 5000; ctx.currentTime += 0.1;
+    frame();
+    ws.onmessage({ data: JSON.stringify({ type: "update", ack: 1 }) });
+    tick();
+    clock.now += 4000;  // running, but no audio for 4 s
+    tick(); tick();
+    return kinds(ws);
+    """
+    assert run_page(steps) == ["hello", "frame", "pause", "frame", "pause"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_page_reconnects_at_once_when_the_socket_goes_silent():
+    """A half-open socket (a network drop with no reset) takes a browser a minute to close: the page doesn't wait for it."""
+    steps = """
+    ui.name.value = "Gavin";
+    state.wantSocket = true;
+    connect();
+    const first = sockets[0];
+    open(first);
+    clock.now += 9000;  // nothing heard
+    tick();
+    clock.now += 9000;  // the next socket never opens either
+    tick();
+    return { sockets: sockets.length, closed: first.closed, detached: first.onclose === null, current: state.ws === sockets[2] };
+    """
+    assert run_page(steps) == {"sockets": 3, "closed": True, "detached": True, "current": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_page_resumes_audio_on_a_touch_and_stops_on_refusals():
+    steps = """
+    const resumed = [];
+    state.audio = { ctx: { state: "suspended", resume: () => resumed.push(1) } };
+    for (const type of ["touchend", "click"]) (listeners[type] || []).forEach((f) => f({}));  // what iOS counts as a gesture
+    state.audio = null;
+    ui.name.value = "Gavin";
+    state.wantSocket = true;
+    connect();
+    sockets[0].onclose({ code: 1003, reason: "bad frame" });  // resending the same frame would fail again
+    return { resumed: resumed.length, wantSocket: state.wantSocket, fatal: state.fatal };
+    """
+    assert run_page(steps) == {"resumed": 2, "wantSocket": False, "fatal": "bad frame"}
+
+
 CHROME = os.environ.get("YUS_CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 # A synthetic microphone: headless Chrome's fake capture device hangs getUserMedia on macOS.
 FAKE_MICROPHONE = """navigator.mediaDevices.getUserMedia = async (constraints) => {
   window.constraints = constraints;
   const context = new AudioContext({ sampleRate: 44100 });
-  document.addEventListener("pointerdown", () => context.resume());  // like the page's own context, it waits for a tap
+  for (const type of ["touchend", "click"]) document.addEventListener(type, () => context.resume());  // like the page's own context, it waits for a tap
   const tone = context.createOscillator(), gain = context.createGain(), out = context.createMediaStreamDestination();
   tone.frequency.value = 440;
   gain.gain.value = 0.5;
@@ -537,11 +781,17 @@ class Browser:
     def wait(self, expression: str, timeout: float = 10.0):
         wait_until(lambda: self.js(expression), timeout)
 
+    def tap(self):
+        """A finger tap: its pointerdown is no user gesture for audio, its touchend is."""
+        for kind, points in (("touchStart", [{"x": 5, "y": 5}]), ("touchEnd", [])):
+            self.call("Input.dispatchTouchEvent", type=kind, touchPoints=points)
+
 
 @pytest.mark.skipif(os.environ.get("YUS_SLOW_TESTS") != "1" or not os.path.exists(CHROME), reason="needs YUS_SLOW_TESTS=1 and Chrome (YUS_CHROME)")
 def test_commentate_page_in_chrome(game, tmp_path):
     """The real page in headless Chrome: audio waits for a tap, then goes from a 44.1 kHz context to the transcriber at 16 kHz;
-    a dropped connection reconnects and continues the segment, and stop ends it."""
+    a dropped connection reconnects and continues the segment, a pause ends it and a tap starts the next at the right time, and
+    stop ends that."""
     from websockets.sync.client import connect
 
     factory = Factory()
@@ -557,8 +807,7 @@ def test_commentate_page_in_chrome(game, tmp_path):
                 tab.js(FAKE_MICROPHONE)
                 tab.js("document.getElementById('name').value = 'Chrome'; document.getElementById('focus').value = 'Category 5'; document.getElementById('toggle').click()")
                 tab.wait("document.getElementById('status').textContent === 'Audio paused: tap anywhere to resume'")  # no user gesture yet
-                for kind in ("mousePressed", "mouseReleased"):  # a real tap
-                    tab.call("Input.dispatchMouseEvent", type=kind, x=5, y=5, button="left", clickCount=1)
+                tab.tap()
                 tab.wait("document.getElementById('status').textContent === 'Live'")
                 assert tab.js("window.constraints") == {"audio": {"echoCancellation": False, "channelCount": 1}}
                 tab.wait("document.querySelectorAll('#transcript li').length >= 2")
@@ -569,13 +818,21 @@ def test_commentate_page_in_chrome(game, tmp_path):
                 tab.wait("document.getElementById('status').textContent.startsWith('Reconnecting')")
                 tab.wait("document.getElementById('status').textContent === 'Live'")
                 wait_until(lambda: stream.received_s > received + 1)
+                tab.js("state.audio.ctx.suspend()")  # a phone call, or the page in the background
+                wait_until(lambda: stream.next_ms is None and factory.made[0].flushed)  # the page said so: the last words are committed
+                time.sleep(2)
+                tab.tap()
+                resumed = time.time()
+                tab.wait("document.getElementById('status').textContent === 'Live'")
+                wait_until(lambda: len(factory.made) == 2)
+                assert abs(factory.made[1].start.timestamp() - resumed) < 0.5  # not 2 s early
                 tab.js("document.getElementById('toggle').click()")
                 tab.wait("document.getElementById('status').textContent === 'Stopped (connected)'")
-                wait_until(lambda: factory.made[0].flushed)
+                wait_until(lambda: factory.made[1].flushed)
         finally:
             chrome.terminate()
-    assert stream.segments == 1 and server.session.snapshot().commentators[0].focus_team == "Category 5"
-    (transcriber,) = factory.made
-    audio = np.concatenate(transcriber.feeds)
-    assert transcriber.sample_rate == 16000 and transcriber.samples == pytest.approx(stream.received_s * 16000)
+    assert stream.segments == 2 and server.session.snapshot().commentators[0].focus_team == "Category 5"
+    first, second = factory.made
+    audio = np.concatenate(first.feeds)
+    assert first.sample_rate == 16000 and first.samples + second.samples == pytest.approx(stream.received_s * 16000)
     assert np.sqrt(np.mean(audio[1600:] ** 2)) == pytest.approx(0.5 / np.sqrt(2), rel=0.02)  # the tone, downsampled

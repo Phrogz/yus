@@ -7,8 +7,10 @@ const FRAME_SAMPLES = 1600; // 100 ms
 const HEADER = 12; // uint32 sequence number, float64 capture time (ms since 1970), little-endian
 const MAX_FRAMES = 3000; // 5 minutes kept for resending
 const SEND_LIMIT = 512 * 1024; // bytes queued in the socket before waiting
-const SILENT_MS = 8000; // no message for this long: reconnect
-const MUTE_MS = 3000; // no audio for this long while live: warn
+const SILENT_MS = 8000; // no message for this long (or not open after this long): reconnect
+const MUTE_MS = 3000; // no audio for this long while live: warn, and tell the server
+const RESYNC_MS = 1000; // the audio clock stood still this much longer than the wall clock (suspended): capture times start again
+const FATAL = [1003, 1008, 4000, 4403]; // close codes after which reconnecting would fail the same way
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -25,8 +27,10 @@ const state = {
   dropped: 0,
   stopPending: false,
   live: false,
-  captureBase: null, // capture time of the first sample since starting (ms since 1970)
+  captureBase: null, // capture time of the first sample since starting or resuming (ms since 1970)
   captured: 0, // samples captured since then
+  clockGap: 0, // the wall clock minus the audio clock then (ms): it grows only while the audio clock stands still
+  pauseSent: false, // the server was told that audio paused (and nothing was captured since)
   lastFrame: 0, // when the microphone last gave a frame
   ws: null,
   welcomed: false,
@@ -84,6 +88,7 @@ function connect() {
   ws.binaryType = "arraybuffer";
   state.ws = ws;
   state.welcomed = false;
+  state.lastMessage = Date.now();
   ws.onopen = () => {
     state.lastMessage = Date.now();
     ws.send(JSON.stringify({
@@ -101,7 +106,7 @@ function connect() {
     if (state.ws !== ws) return;
     state.ws = null;
     state.welcomed = false;
-    if (event.code === 1008 || event.code === 4000 || event.code === 4403) {
+    if (FATAL.includes(event.code)) {
       state.wantSocket = false;
       if (!state.fatal) state.fatal = event.reason || "The server refused the connection";
       stopAudio();
@@ -116,11 +121,24 @@ function connect() {
   showStatus();
 }
 
+// A socket that went silent (a network drop that sent no reset) can take the browser a minute to close: forget it and
+// connect again at once.
+function abandon(ws) {
+  ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+  try { ws.close(); } catch (e) { /* already closing */ }
+  if (state.ws === ws) {
+    state.ws = null;
+    state.welcomed = false;
+  }
+  connect();
+}
+
 function handle(message) {
   if (message.type === "welcome") {
     state.welcomed = true;
     state.retries = 0;
     state.fatal = null;
+    state.pauseSent = false;
     acknowledge(message.ack);
     state.nextSend = state.acked + 1;
     ui.notice.textContent = message.focus_team ? `Following ${message.focus_team}.` : "";
@@ -143,7 +161,12 @@ function acknowledge(ack) {
   if (drop) state.frames.splice(0, drop);
 }
 
-// Send unsent frames in order while the socket keeps up, then a pending stop.
+function audioPaused() {
+  return state.live && ((state.audio && state.audio.ctx.state !== "running") || Date.now() - state.lastFrame > MUTE_MS);
+}
+
+// Send unsent frames in order while the socket keeps up, then a pending stop, or that audio paused (the server then commits
+// the last words, and the commentator's silence no longer holds back other commentators' events).
 function pump() {
   const ws = state.ws;
   if (!ws || ws.readyState !== WebSocket.OPEN || !state.welcomed) return;
@@ -153,28 +176,40 @@ function pump() {
     ws.send(frame.data);
     state.nextSend = frame.seq + 1;
   }
-  if (state.stopPending && state.nextSend >= state.seq) {
+  if (state.nextSend < state.seq) return;
+  if (state.stopPending) {
     ws.send(JSON.stringify({ type: "stop" }));
     state.stopPending = false;
+  } else if (!state.pauseSent && audioPaused()) {
+    ws.send(JSON.stringify({ type: "pause" }));
+    state.pauseSent = true;
   }
 }
 
 setInterval(() => {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN && Date.now() - state.lastMessage > SILENT_MS) state.ws.close();
+  const ws = state.ws;
+  if (ws && ws.readyState <= WebSocket.OPEN && Date.now() - state.lastMessage > SILENT_MS) abandon(ws);
   pump();
   showStatus();
 }, 500);
 
 // ------------------------------------------------------------------ audio
 
+// Capture times count samples from a wall-clock start, so a busy page that gets frames late does not move them. When the
+// audio clock stood still (the context was suspended: a call, the page in the background), they start again from the wall
+// clock, and the server begins a new segment at the right time.
 function onFrame(data) {
   const pcm = new Int16Array(data.pcm);
   const now = Date.now();
+  const ctx = state.audio && state.audio.ctx;
+  const gap = ctx ? now - ctx.currentTime * 1000 : 0;
   state.lastFrame = now;
-  if (state.captureBase === null) {
-    const latency = state.audio && state.audio.ctx.baseLatency ? state.audio.ctx.baseLatency * 1000 : 0;
+  state.pauseSent = false;
+  if (state.captureBase === null || gap - state.clockGap > RESYNC_MS) {
+    const latency = ctx && ctx.baseLatency ? ctx.baseLatency * 1000 : 0;
     state.captureBase = now - (pcm.length / RATE) * 1000 - latency;
     state.captured = 0;
+    state.clockGap = gap;
   }
   const buffer = new ArrayBuffer(HEADER + pcm.byteLength);
   const view = new DataView(buffer);
@@ -215,6 +250,12 @@ async function start() {
     const sink = ctx.createGain();
     sink.gain.value = 0; // some browsers only run nodes that reach the destination
     node.port.onmessage = (event) => onFrame(event.data);
+    ctx.onstatechange = () => {
+      if (!state.audio || state.audio.ctx !== ctx) return; // a context being closed after a stop
+      if (ctx.state !== "running") state.captureBase = null; // in case the audio clock does not stand still while paused
+      pump();
+      showStatus();
+    };
     source.connect(node);
     node.connect(sink).connect(ctx.destination);
     for (const track of stream.getAudioTracks()) {
@@ -290,10 +331,13 @@ function releaseWakeLock() {
   state.wakeLock = null;
 }
 
-// An audio context can be suspended (no user gesture, a phone call, the page in the background); a tap resumes it.
-document.addEventListener("pointerdown", () => {
-  if (state.audio && state.audio.ctx.state !== "running") state.audio.ctx.resume();
-});
+// An audio context can be suspended (no user gesture, a phone call, the page in the background); a tap resumes it. A touch's
+// pointerdown is no user gesture for that (iOS), its touchend and click are.
+for (const type of ["pointerdown", "touchend", "click"]) {
+  document.addEventListener(type, () => {
+    if (state.audio && state.audio.ctx.state !== "running") state.audio.ctx.resume();
+  }, { passive: true });
+}
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.live) keepAwake();

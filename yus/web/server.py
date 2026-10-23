@@ -34,7 +34,7 @@ import time
 import wave
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Protocol
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 import numpy as np
 import pydantic
@@ -63,10 +63,11 @@ FRAME = struct.Struct("<Id")
 CONTIGUOUS_MS = 1000.0  # a frame starting this close to where the last one ended continues it
 PAD_MS = 5000.0  # a gap up to this long (frames lost) is filled with silence; a longer one (or a jump back) starts a new segment
 MAX_FRAME_S = 10.0  # longest frame accepted
+MAX_SKEW_MS = 24 * 3600 * 1000.0  # a phone clock this far from the server's, or a capture time this far from now, is not believed
 
 TICK_S = 1.0  # how often idle commentators are advanced
 SAVE_S = 10.0  # how often the session is saved, when it changed
-IDLE_S = 120.0  # a commentator disconnected this long has their segment ended (their last words committed)
+IDLE_S = 120.0  # a commentator heard nothing from this long (connected or not) has their segment ended (their last words committed)
 UPDATE_S = 0.25  # how often a phone is sent an update, when something changed
 HEARTBEAT_S = 2.0  # ... and at least this often
 TRANSCRIPT_LINES = 8  # transcript groups a phone shows
@@ -142,8 +143,9 @@ class CommentatorStream:
     """One commentator's audio: frames in order and once each, timestamped, recorded, and transcribed by a worker thread.
 
     Audio arrives in segments: a segment is contiguous audio, transcribed by one Transcriber that starts at the segment's first
-    sample. A segment ends when the commentator stops, when the phone starts a new stream (a reload), when frames jump back or
-    leave a gap longer than PAD_MS, or after IDLE_S disconnected. Everything but the worker runs on the event loop.
+    sample. A segment ends when the commentator stops or their audio pauses, when the phone starts a new stream (a reload), when
+    frames jump back or leave a gap longer than PAD_MS, or after IDLE_S without a frame. Everything but the worker runs on the
+    event loop.
     """
 
     def __init__(self, server: GameServer, name: str):
@@ -188,7 +190,8 @@ class CommentatorStream:
         if hello.stream != self.stream_id or hello.sample_rate != self.sample_rate:
             self.end_segment()
             self.stream_id, self.sample_rate, self.last_seq = hello.stream, hello.sample_rate, -1
-        self.offset_ms = now_ms - hello.client_time if hello.client_time and math.isfinite(hello.client_time) else 0.0
+        offset = now_ms - hello.client_time if hello.client_time else 0.0
+        self.offset_ms = offset if math.isfinite(offset) and abs(offset) <= MAX_SKEW_MS else 0.0
 
     def receive(self, data: bytes, now: float) -> bool:
         """Take a binary frame; False if it was taken before. Raises ValueError for a malformed frame."""
@@ -198,7 +201,7 @@ class CommentatorStream:
         if seq <= self.last_seq:
             return False
         pcm = np.frombuffer(data, dtype="<i2", offset=FRAME.size)
-        if not math.isfinite(capture_ms) or capture_ms <= 0:  # no capture time: assume it continues, else that it just ended
+        if not (capture_ms > 0 and abs(capture_ms + self.offset_ms - now * 1000) <= MAX_SKEW_MS):  # none, or not believable (also NaN)
             capture_ms = self.next_ms if self.next_ms is not None else now * 1000 - self.offset_ms - len(pcm) / self.sample_rate * 1000
         if self.next_ms is not None and abs(capture_ms - self.next_ms) > CONTIGUOUS_MS:
             gap = capture_ms - self.next_ms
@@ -332,6 +335,7 @@ class CommentatorStream:
         except RuntimeError:
             if not session.finished:
                 raise  # else the game finished: words after the end don't count
+        self.error = None  # working again
 
 
 class _Connection:
@@ -339,7 +343,8 @@ class _Connection:
 
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
-        self.replaced = asyncio.Event()
+        self.replaced = asyncio.Event()  # a newer connection took over the commentator: nothing more is taken from this one
+        self.closed = False
         self._lock = asyncio.Lock()
 
     async def send(self, message: dict[str, Any]) -> None:
@@ -348,8 +353,22 @@ class _Connection:
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         async with self._lock:
+            if self.closed:
+                return
+            self.closed = True
             with contextlib.suppress(Exception):
                 await self.websocket.close(code, reason)
+
+    async def fail(self, message: str, code: int, reason: str) -> None:
+        """Tell the phone why, then close (once). The page stops for good on the codes used: 1003, 1008, 4000."""
+        if self.closed:
+            return
+        with contextlib.suppress(Exception):
+            await self.send({"type": "error", "message": message})
+        await self.close(code, reason)
+
+    async def end_replaced(self) -> None:
+        await self.fail("Replaced by a newer connection for this commentator", 4000, "replaced")
 
 
 class GameServer:
@@ -413,12 +432,14 @@ class GameServer:
                 log.exception("Background tick failed")
 
     def _idle_commentators(self) -> list[str]:
-        """Commentators with no segment open and nothing left to transcribe: their transcript is complete up to now."""
+        """Commentators with no segment open and nothing left to transcribe: their transcript is complete up to now. A segment
+        ends when its phone pauses or stops; one that has had no frame for `idle_after` (a phone that dropped, or could not say
+        it paused) is ended here. The phone may still send audio it kept, but an outage is not told from a pause sooner."""
         idle = []
         for name in self.session.commentators:
             stream = self.streams.get(name)
             if stream is not None and stream.next_ms is not None:
-                if stream.connected or self.clock() - stream.last_frame < self.idle_after:
+                if self.clock() - stream.last_frame < self.idle_after:
                     continue
                 stream.end_segment()
             if stream is None or not stream.busy:
@@ -476,6 +497,8 @@ class GameServer:
     def state(self, events: int = 20) -> dict[str, Any]:
         """The game for /api/state: score, teams, commentators, the last `events` official events (-1: all), unresolved names."""
         snap = self.session.snapshot()
+        if events < 0 or events >= len(snap.official.events):
+            events = -1  # all: one cache entry whatever was asked
         with self._state_lock:
             if self._state_version != snap.version:
                 self._state_cache, self._state_version = {}, snap.version
@@ -710,14 +733,15 @@ async def _audio_socket(websocket: WebSocket) -> None:
     try:
         await _receive_audio(server, stream, connection)
     except ValueError as error:
-        await connection.send({"type": "error", "message": str(error)})
-        await connection.close(1003, "bad frame")
+        await connection.fail(str(error), 1003, "bad frame")
     except WebSocketDisconnect:
         pass
     finally:
         sender.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await sender
+        if connection.replaced.is_set():
+            await connection.end_replaced()  # unless the sender did
         if stream.connection is connection:
             stream.connection = None
 
@@ -738,21 +762,20 @@ async def _greet(server: GameServer, connection: _Connection) -> Hello | None:
     except WebSocketDisconnect:
         return None
     except (pydantic.ValidationError, ValueError, RuntimeError, KeyError) as error:
-        await connection.send({"type": "error", "message": str(error)})
-        await connection.close(1008, "bad hello")
+        await connection.fail(str(error), 1008, "bad hello")
         return None
 
 
 async def _receive_audio(server: GameServer, stream: CommentatorStream, connection: _Connection) -> None:
-    while not connection.replaced.is_set():
+    while True:
         message = await connection.websocket.receive()
-        if message["type"] == "websocket.disconnect":
-            return
+        if message["type"] == "websocket.disconnect" or connection.replaced.is_set():
+            return  # a frame that was on its way when a newer connection took over is not taken: the newer one's would be dropped
         if message.get("bytes") is not None:
             if server.accepting:
                 stream.receive(message["bytes"], server.clock())
-        elif message.get("text") is not None and _json(message["text"]).get("type") == "stop":
-            stream.end_segment()
+        elif message.get("text") is not None and _json(message["text"]).get("type") in ("stop", "pause"):
+            stream.end_segment()  # stopped, or its audio paused: the transcriber commits every word
 
 
 async def _send_updates(server: GameServer, stream: CommentatorStream, connection: _Connection) -> None:
@@ -762,8 +785,7 @@ async def _send_updates(server: GameServer, stream: CommentatorStream, connectio
     last = 0.0
     while True:
         if connection.replaced.is_set():
-            await connection.send({"type": "error", "message": "Replaced by a newer connection for this commentator"})
-            await connection.close(4000, "replaced")
+            await connection.end_replaced()
             return
         message: dict[str, Any] = {
             "type": "update",
@@ -813,13 +835,16 @@ class KeyMiddleware:
         cookies = Request(scope).cookies if scope["type"] == "http" else WebSocket(scope, receive, send).cookies
         if self._valid(given) and scope["type"] == "http":
             query = "&".join(part for part in scope.get("query_string", b"").decode("latin-1").split("&") if not part.startswith("key="))
-            response = RedirectResponse(scope["path"] + (f"?{query}" if query else ""), status_code=303)
+            path = "/" + quote(scope["path"]).lstrip("/")  # never "//host/...": the redirect stays on this server
+            response = RedirectResponse(path + (f"?{query}" if query else ""), status_code=303)
             response.set_cookie(self.COOKIE, self.key, httponly=True, samesite="lax", secure=scope.get("scheme") == "https", max_age=7 * 24 * 3600)
             return await response(scope, receive, send)
         if self._valid(given) or self._valid(cookies.get(self.COOKIE)):
             return await self.app(scope, receive, send)
-        if scope["type"] == "websocket":
-            return await send({"type": "websocket.close", "code": 4403, "reason": "key needed"})
+        if scope["type"] == "websocket":  # accepted first: browsers see a refused handshake only as close code 1006
+            websocket = WebSocket(scope, receive, send)
+            await websocket.accept()
+            return await websocket.close(4403, "key needed")
         return await PlainTextResponse("Forbidden: open the link with ?key=... first", status_code=403)(scope, receive, send)
 
     def _valid(self, given: str | None) -> bool:
