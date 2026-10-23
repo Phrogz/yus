@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 import pathlib
 import socket
@@ -18,6 +19,7 @@ import yus
 from tests.data.gruindoor_20250114T2030 import build_game
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
 from yus.session import GameSession, GameSnapshot, replay
+from yus.sports.ultimate import indoor
 from yus.web import dashboard
 from yus.web.dashboard import create_dashboard, run_dashboard
 
@@ -43,14 +45,36 @@ def transcript() -> yus.Transcript:
     return yus.Transcript.model_validate_json(TRANSCRIPT.read_text())
 
 
-def truth_snapshot(game: yus.Game, descriptions: GameDescriptions, provisional: int = PROVISIONAL, version: int = 1) -> GameSnapshot:
-    """The ground-truth game (the hand-made official stream, 14-9) as a session's snapshot, its last `provisional` events provisional."""
-    from yus.session import _Views  # what a session computes on first read: stats, unresolved and unmentioned names
-
+def truth_snapshot(
+    game: yus.Game, descriptions: GameDescriptions, provisional: int = PROVISIONAL, version: int = 1, when: dt.datetime | None = None, finished: bool = False
+) -> GameSnapshot:
+    """The ground-truth game (the hand-made official stream, 14-9) as a session's snapshot, its last `provisional` events provisional.
+    `when`: the game's start, if not the pull."""
     official = game.official_stream
     assert official is not None
-    settled = len(official.events) - provisional
-    views = _Views(official, game.teams, settled, PlayerResolver(game.teams, descriptions))
+    if when is not None:
+        game = game.model_copy(update={"when": when})
+        official = official.model_copy(update={"game": game})
+    return snapshot_of(game, official.events, descriptions, settled=len(official.events) - provisional, version=version, finished=finished, official=official)
+
+
+def snapshot_of(
+    game: yus.Game,
+    events: list[yus.Event],
+    descriptions: GameDescriptions | None = None,
+    teams: list[yus.Team] | None = None,
+    settled: int | None = None,
+    version: int = 1,
+    finished: bool = False,
+    official: yus.EventStream | None = None,
+) -> GameSnapshot:
+    """A session's snapshot of `events` (names resolved), stats computed with `teams` (default: the game's)."""
+    from yus.session import _Views  # what a session computes on first read: stats, unresolved and unmentioned names
+
+    descriptions = descriptions or GameDescriptions()
+    official = official or yus.EventStream(game=game, events=events)
+    settled = len(events) if settled is None else settled
+    views = _Views(official, game.teams if teams is None else teams, settled, PlayerResolver(game.teams, descriptions))
     return GameSnapshot(
         version=version,
         game=game,
@@ -63,9 +87,13 @@ def truth_snapshot(game: yus.Game, descriptions: GameDescriptions, provisional: 
         associations=[],
         descriptions=descriptions,
         merge=None,
-        finished=False,
+        finished=finished,
         views=views,
     )
+
+
+def throw(game: yus.Game, seconds: float, team: str, scored: bool = False) -> indoor.Throw:
+    return indoor.Throw(when=game.when + dt.timedelta(seconds=seconds), team=team, player=f"p{seconds:g}", receiver=f"r{seconds:g}", completed=True, scored=scored)
 
 
 def update(client: Client, app: dash.Dash, output: str, values: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -375,6 +403,66 @@ def test_clock_uses_the_latest_commentary(game, descriptions, transcript):
     app = create_dashboard(session.snapshot)
     board = text(refresh(app.server.test_client(), app)["scoreboard"]["children"])
     assert dashboard._mmss(expected) in board and snapshot.finished is False
+
+
+def test_game_time_counts_from_the_first_throw_when_the_game_started_long_before_it(game, descriptions, truth):
+    """yus-serve's game starts when the server does, minutes before the pull: game time then counts from the first throw (4.2 s
+    after the pull here). A start up to PULL_GRACE_S before the first throw is taken to be the pull."""
+    early = truth_snapshot(game, descriptions, when=game.when - dt.timedelta(minutes=5))
+    app = create_dashboard(lambda: early)
+    shown = refresh(app.server.test_client(), app)
+    assert "15:09live · point 24 in play" in text(shown["scoreboard"]["children"])  # 913.7 s after the pull, 909.5 after the first throw
+    figure, pulled = shown["score-timeline"]["figure"], truth["response"]["score-timeline"]["figure"]
+    assert figure["layout"]["shapes"][0]["x0"] == 0.0 and figure["data"][0]["x"][0] == 0.0
+    assert figure["layout"]["shapes"][0]["x1"] == pytest.approx(pulled["layout"]["shapes"][0]["x1"] - 4.2 / 60)
+    assert figure["data"][1]["x"] == pytest.approx([x - 4.2 / 60 for x in pulled["data"][1]["x"]])
+    assert "14–9 · hold · 14:21" in figure["data"][3]["customdata"][-1]
+    assert min(min(trace["base"]) for trace in shown["flow"]["figure"]["data"]) == 0.0
+    assert text(shown["events"]["children"]).startswith("15:09")
+
+    near = truth_snapshot(game, descriptions, when=game.when - dt.timedelta(seconds=20))  # the first throw 24.2 s later
+    app = create_dashboard(lambda: near)
+    assert "15:33" in text(refresh(app.server.test_client(), app)["scoreboard"]["children"])
+
+
+def test_clock_waits_for_the_first_throw(game, descriptions, transcript):
+    session = GameSession(game.model_copy(update={"when": game.when - dt.timedelta(minutes=5)}), descriptions)
+    replay(session, transcript.model_copy(update={"groups": transcript.groups[:1]}), "Gavin")  # "on white we have kaia ..."
+    assert not len(session.snapshot().stats.throws)
+    app = create_dashboard(session.snapshot)
+    client = app.server.test_client()
+    before = refresh(client, app)
+    assert text(before["scoreboard"]["children"]).endswith("0:00live · not started")
+
+    session.add_groups("Gavin", transcript.groups[1:30])
+    stats, last = session.snapshot().stats, transcript.groups[29].words[-1]
+    expected = (last.start + last.duration - stats.start).total_seconds() - float(stats.throws["elapsed"].min())
+    assert text(refresh(client, app, before["seen"]["data"])["scoreboard"]["children"]).endswith(dashboard._mmss(expected) + "live")
+
+
+def test_a_goal_by_an_unknown_team_ends_its_point(game):
+    unknown = [throw(game, 10, ""), throw(game, 11, ""), throw(game, 12, "", scored=True)]  # nobody has said a team yet
+    snapshot = snapshot_of(game, unknown)
+    assert snapshot.stats.summary() == f"{WHITE} 0, {BLACK} 0"
+    app = create_dashboard(lambda: snapshot)
+    shown = refresh(app.server.test_client(), app)
+    assert text(shown["scoreboard"]["children"]) == f"{WHITE}0{BLACK}00:12live"
+    (shape,) = shown["score-timeline"]["figure"]["layout"]["shapes"]
+    assert (shape["fillcolor"], shape["opacity"], shape["x1"]) == (dashboard.GRID, 0.2, 0.2)  # faint: neither hold nor break
+
+    # without two known teams nothing infers the first point's team; its goal still gets its line in Game flow
+    snapshot = snapshot_of(game, unknown + [throw(game, 20, "white")], teams=[])
+    app = create_dashboard(lambda: snapshot)
+    shown = refresh(app.server.test_client(), app)
+    assert "point 2 in play" in text(shown["scoreboard"]["children"]) and "point 1" not in text(shown["scoreboard"]["children"])
+    assert [line["x0"] for line in shown["flow"]["figure"]["layout"]["shapes"]] == [0.2]
+    assert len(shown["score-timeline"]["figure"]["layout"]["shapes"]) == 1
+
+
+def test_finished_game_has_no_point_in_play(game, descriptions):
+    snapshot = truth_snapshot(game, descriptions, provisional=0, finished=True)
+    app = create_dashboard(lambda: snapshot)
+    assert text(refresh(app.server.test_client(), app)["scoreboard"]["children"]).endswith("15:13final · point 24 unfinished")
 
 
 def test_an_older_snapshot_gets_the_newest_view(game, descriptions, monkeypatch):

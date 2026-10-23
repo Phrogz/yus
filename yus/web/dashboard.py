@@ -32,6 +32,7 @@ from yus.session import GameSession, GameSnapshot
 from yus.sports import ultimate
 
 RECENT_EVENTS = 40  # events listed, newest first
+PULL_GRACE_S = 30.0  # a first throw later than this after the game's `when` means `when` was not the pull (see _origin)
 
 # Colors: a validated categorical palette (teams take slots 1 and 2), its ink and surfaces, and a one-hue sequential ramp.
 SURFACE, PLANE, INK, INK_2, MUTED, GRID, AXIS = "#fcfcfb", "#f4f4f1", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
@@ -260,11 +261,12 @@ def _light(snapshot: GameSnapshot, stats: GameStats) -> dict[str, Any]:
 
 
 def _heavy(snapshot: GameSnapshot, stats: GameStats, describing: bool) -> dict[str, Any]:
-    end = _last_elapsed(stats)
+    origin = _origin(stats)
+    end = _last_elapsed(stats) - origin
     out = {
-        "score-timeline": _score_figure(stats, end),
-        "flow": _flow_figure(stats, end),
-        "events": _events(snapshot, stats),
+        "score-timeline": _score_figure(stats, end, origin),
+        "flow": _flow_figure(stats, end, origin),
+        "events": _events(snapshot, stats, origin),
         "unresolved": _unresolved(snapshot, stats),
         "team-box": _team_box(stats),
         "player-box": _player_rows(stats),
@@ -292,14 +294,16 @@ def _scoreboard(snapshot: GameSnapshot, stats: GameStats) -> list[Any]:
     clock = _game_clock(snapshot, stats)
     notes = ["final" if snapshot.finished else "live"]
     points = stats.points
-    if len(points) and pd.isna(points["hold"].iloc[-1]) and points["throws"].iloc[-1]:
-        notes.append(f"point {points.index[-1]} in play")
+    if not len(stats.throws):
+        notes.append("not started")
+    elif clock is not None and clock < 0:
+        notes.append("before the start")
+    if len(points) and points["throws"].iloc[-1] and points.index[-1] not in set(stats.score_timeline["point"]):
+        notes.append(f"point {points.index[-1]} {'unfinished' if snapshot.finished else 'in play'}")
     if provisional := len(snapshot.official.events) - snapshot.settled_count:
         notes.append(f"{provisional} provisional event{'s' * (provisional != 1)}")
     shown = _mmss(clock) if clock is not None and clock >= 0 else "0:00"
-    meta = [html.Span(shown, className="clock", title="game clock: time since the game's start, as of the latest commentary")]
-    if clock is not None and clock < 0:
-        notes.insert(1, "before the start")
+    meta = [html.Span(shown, className="clock", title="game clock: time since the pull, as of the latest commentary")]
     return [html.Div(teams, className="teams-score"), html.Div(meta + [html.Span(" · ".join(notes), className="notes")], className="meta")]
 
 
@@ -316,16 +320,25 @@ def _commentators(snapshot: GameSnapshot) -> list[Any]:
 
 
 def _game_clock(snapshot: GameSnapshot, stats: GameStats) -> float | None:
-    """Seconds from the stats' start to the latest commentary: the clock-reference commentator's last word, or the last event."""
-    if stats.start is None:
+    """Seconds from the pull (see _origin) to the latest commentary: the clock-reference commentator's last word, or the last
+    event. None before the first throw."""
+    if stats.start is None or not len(stats.throws):
         return None
-    times = [_last_elapsed(stats)] if _has_events(stats) else []
+    times = [_last_elapsed(stats)]
     if snapshot.commentators and (groups := snapshot.transcripts.get(snapshot.commentators[0].name)):
         words = [word for group in groups[-1:] for word in group.words]
         if words:
             heard = _naive(words[-1].start + words[-1].duration, snapshot)
             times.append((heard - stats.start).total_seconds())
-    return max(times) if times else None
+    return max(times) - _origin(stats)
+
+
+def _origin(stats: GameStats) -> float:
+    """Seconds from the stats' start (the game's `when`) to the pull, which the dashboard counts game time from. That is `when`
+    itself unless the first throw came more than PULL_GRACE_S after it (it comes 3-4 s after the pull on the test game): then
+    `when` was not the pull (yus-serve's game starts when the server does) and the first throw stands in for it."""
+    first = float(stats.throws["elapsed"].min()) if len(stats.throws) else 0.0
+    return first if first > PULL_GRACE_S else 0.0
 
 
 def _naive(when: dt.datetime, snapshot: GameSnapshot) -> dt.datetime:
@@ -358,16 +371,17 @@ def _figure(data: list[dict[str, Any]], height: int | None = None, xaxis: dict[s
     return {"data": data, "layout": style | ({"height": height} if height else {}) | layout}
 
 
-def _score_figure(stats: GameStats, end: float) -> Figure:
+def _score_figure(stats: GameStats, end: float, origin: float) -> Figure:
     timeline, points = stats.score_timeline, stats.points
     if not len(timeline) and not len(points):
         return _empty_figure("No points yet")
-    shapes = []
-    for start, stop, hold, scored_by in zip(points["start"], points["end"], points["hold"], points["scored_by"]):
-        if not pd.isna(hold):
-            span = {"x0": _minutes(start, stats), "x1": _minutes(stop, stats), "fillcolor": GRID if hold else _team_color(stats, scored_by), "opacity": 0.45 if hold else 0.16}
+    shapes, scored = [], set(timeline["point"])
+    for point, start, stop, hold, scored_by in zip(points.index, points["start"], points["end"], points["hold"], points["scored_by"]):
+        if point in scored:  # holds gray, breaks in the breaking team's color, faint gray when the teams are not known
+            fill = (GRID, 0.2) if pd.isna(hold) else (GRID, 0.45) if hold else (_team_color(stats, scored_by), 0.16)
+            span = {"x0": max(_minutes(start, stats, origin), 0.0), "x1": _minutes(stop, stats, origin), "fillcolor": fill[0], "opacity": fill[1]}
             shapes.append({"type": "rect", "xref": "x", "yref": "paper", "y0": 0, "y1": 1, "line": {"width": 0}, "layer": "below"} | span)
-    minutes = [float(m) for m in timeline["elapsed"] / 60]
+    minutes = [float(m) for m in (timeline["elapsed"] - origin) / 60]
     last = max(end / 60, minutes[-1] if minutes else 0.0)
     data = []
     for team in stats.teams:
@@ -383,11 +397,11 @@ def _score_figure(stats: GameStats, end: float) -> Figure:
                 {
                     "type": "scatter",
                     "mode": "markers",
-                    "x": [float(m) for m in goals["elapsed"] / 60],
+                    "x": [float(m) for m in (goals["elapsed"] - origin) / 60],
                     "y": [int(score) for score in goals[column]],
                     "marker": marker,
                     "showlegend": False,
-                    "customdata": [_goal_hover(stats, goal, row) for goal, row in goals.iterrows()],
+                    "customdata": [_goal_hover(stats, goal, row, origin) for goal, row in goals.iterrows()],
                     "hovertemplate": "%{customdata}<extra></extra>",
                 }
             )
@@ -395,13 +409,13 @@ def _score_figure(stats: GameStats, end: float) -> Figure:
     return _figure(data, shapes=shapes, legend=LEGEND, xaxis=xaxis, yaxis={"rangemode": "tozero", "tickformat": "d", "dtick": _score_dtick(stats)})
 
 
-def _goal_hover(stats: GameStats, goal: int, row: pd.Series) -> str:
+def _goal_hover(stats: GameStats, goal: int, row: pd.Series, origin: float) -> str:
     score = "–".join(str(int(row[SCORE_PREFIX + team])) for team in stats.teams)
     kind = "" if pd.isna(row["hold"]) else (" · hold" if row["hold"] else " · break")
-    return f"Goal {goal}: {row['assist'] or '?'} → {row['scorer'] or '?'}<br>{score}{kind} · {_mmss(row['elapsed'])}{' · provisional' if row['provisional'] else ''}"
+    return f"Goal {goal}: {row['assist'] or '?'} → {row['scorer'] or '?'}<br>{score}{kind} · {_mmss(row['elapsed'] - origin)}{' · provisional' if row['provisional'] else ''}"
 
 
-def _flow_figure(stats: GameStats, end: float) -> Figure:
+def _flow_figure(stats: GameStats, end: float, origin: float) -> Figure:
     possessions = stats.possessions
     possessions = possessions[possessions["team"].notna()]
     if not len(possessions):
@@ -414,7 +428,7 @@ def _flow_figure(stats: GameStats, end: float) -> Figure:
         hatch = ["/" if provisional else "" for provisional in rows["provisional"]]
         hover = [
             f"Possession {n} · point {row['point']} · {row['team']}<br>{row['throws']} throws, {row['completions']} completed · {outcome}"
-            f"<br>{_mmss(_minutes(row['start'], stats) * 60)}–{_mmss(_minutes(row['end'], stats) * 60)}{' · provisional' if row['provisional'] else ''}"
+            f"<br>{_mmss(_minutes(row['start'], stats, origin) * 60)}–{_mmss(_minutes(row['end'], stats, origin) * 60)}{' · provisional' if row['provisional'] else ''}"
             for n, row in rows.iterrows()
         ]
         data.append(
@@ -424,13 +438,14 @@ def _flow_figure(stats: GameStats, end: float) -> Figure:
                 "name": outcome,
                 "y": list(rows["team"]),
                 "x": [max(seconds, 2.0) / 60 for seconds in rows["duration_s"]],  # at least 2 s, to stay visible
-                "base": [_minutes(start, stats) for start in rows["start"]],
+                "base": [_minutes(start, stats, origin) for start in rows["start"]],
                 "marker": {"color": color, "line": {"color": SURFACE, "width": 1}, "pattern": {"shape": hatch, "fgcolor": SURFACE, "fillmode": "overlay"}},
                 "customdata": hover,
                 "hovertemplate": "%{customdata}<extra></extra>",
             }
         )
-    goals = [_minutes(stop, stats) for stop, hold in zip(stats.points["end"], stats.points["hold"]) if not pd.isna(hold)]
+    scored = set(stats.score_timeline["point"])
+    goals = [_minutes(stop, stats, origin) for point, stop in zip(stats.points.index, stats.points["end"]) if point in scored]
     shapes = [{"type": "line", "xref": "x", "yref": "paper", "x0": x, "x1": x, "y0": 0, "y1": 1, "line": {"color": AXIS, "width": 1}} for x in goals]
     yaxis = {"type": "category", "categoryorder": "array", "categoryarray": list(reversed(stats.teams)), "showgrid": False}
     xaxis = {"title": {"text": "minutes"}, "range": [0, max(end / 60, 0.1) * 1.01]}
@@ -568,7 +583,7 @@ def _player_rows(stats: GameStats) -> list[dict[str, Any]]:
     return rows
 
 
-def _events(snapshot: GameSnapshot, stats: GameStats) -> list[Any]:
+def _events(snapshot: GameSnapshot, stats: GameStats, origin: float) -> list[Any]:
     events = snapshot.official.events
     if not events:
         return [html.Li("No events yet.", className="muted")]
@@ -584,7 +599,7 @@ def _events(snapshot: GameSnapshot, stats: GameStats) -> list[Any]:
         team = teams.get(index) or getattr(event, "team", None) or ""
         seconds = elapsed.get(index)
         children: list[Any] = [
-            html.Span("" if seconds is None or math.isnan(seconds) else _mmss(seconds), className="t"),
+            html.Span("" if seconds is None or math.isnan(seconds) else _mmss(seconds - origin), className="t"),
             html.Span(className="swatch", style={"background": _team_color(stats, team)}),
             html.Span(_describe_event(event, scores.get(index))),
         ]
@@ -656,20 +671,17 @@ def _team_color(stats: GameStats, team: str | None) -> str:
     return TEAM_COLORS[stats.teams.index(team)] if team in stats.teams and stats.teams.index(team) < len(TEAM_COLORS) else MUTED
 
 
-def _has_events(stats: GameStats) -> bool:
-    return any(len(getattr(stats, name)) for name in GameStats.RAW_TABLES)
-
-
 def _last_elapsed(stats: GameStats) -> float:
     values = [getattr(stats, name)["elapsed"].max() for name in GameStats.RAW_TABLES if len(getattr(stats, name))]
     values = [float(v) for v in values if not pd.isna(v)]
     return max(values) if values else 0.0
 
 
-def _minutes(when: Any, stats: GameStats) -> float:
+def _minutes(when: Any, stats: GameStats, origin: float) -> float:
+    """Minutes from the pull (`origin` seconds after the stats' start) to `when`."""
     if stats.start is None or pd.isna(when):
         return 0.0
-    return (pd.Timestamp(when) - pd.Timestamp(stats.start)).total_seconds() / 60
+    return ((pd.Timestamp(when) - pd.Timestamp(stats.start)).total_seconds() - origin) / 60
 
 
 def _mmss(seconds: float) -> str:
