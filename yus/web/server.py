@@ -376,7 +376,8 @@ class GameServer:
         self.tick, self.save_every, self.idle_after = tick, save_every, idle_after
         self.audio_directory = session.directory / "audio" if record_audio and session.directory is not None else None
         self.streams: dict[str, CommentatorStream] = {}
-        self.saved_version: int | None = None
+        saved = session.directory is not None and (session.directory / "session.json").exists()
+        self.saved_version: int | None = session.version if saved else None  # e.g. a session just loaded
         self._saved_at = clock()
         self._save_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -616,7 +617,7 @@ def create_app(server: GameServer, dashboard: Callable[..., Any] | bool = True, 
         Route("/api/describe", _api_describe, methods=["POST"]),
         Route("/api/finish", _api_finish, methods=["POST"]),
         WebSocketRoute("/ws/audio", _audio_socket),
-        Mount("/static", app=StaticFiles(directory=STATIC), name="static"),
+        Mount("/static", app=_Revalidated(directory=STATIC), name="static"),
     ]
     dash_app = _dashboard_app(server, dashboard)
     if dash_app is not None:
@@ -626,6 +627,15 @@ def create_app(server: GameServer, dashboard: Callable[..., Any] | bool = True, 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.server = server
     return KeyMiddleware(app, key) if key else app
+
+
+class _Revalidated(StaticFiles):
+    """Static files that browsers check for changes (ETag) before using, so that phones get new page scripts after an update."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _page(name: str) -> Callable[[Request], Any]:
@@ -719,7 +729,11 @@ async def _greet(server: GameServer, connection: _Connection) -> Hello | None:
         if not server.accepting:
             raise ValueError("The game has finished")
         if hello.commentator not in server.session.commentators:
-            await run_in_threadpool(server.session.add_commentator, hello.commentator, hello.focus_team)
+            try:
+                await run_in_threadpool(server.session.add_commentator, hello.commentator, hello.focus_team)
+            except ValueError:
+                if hello.commentator not in server.session.commentators:  # else another connection just added them
+                    raise
         return hello
     except WebSocketDisconnect:
         return None
@@ -763,7 +777,11 @@ async def _send_updates(server: GameServer, stream: CommentatorStream, connectio
         key = tuple(message.values())
         if server.session.version != version:
             version = server.session.version
-            message.update(await run_in_threadpool(server.commentator_view, stream.name))
+            try:
+                message.update(await run_in_threadpool(server.commentator_view, stream.name))
+            except Exception as error:
+                log.exception("Could not show %s their view", stream.name)
+                message["error"] = f"{type(error).__name__}: {error}"
         elif key == sent and time.monotonic() - last < HEARTBEAT_S:
             await asyncio.sleep(UPDATE_S)
             continue
@@ -796,7 +814,7 @@ class KeyMiddleware:
         if self._valid(given) and scope["type"] == "http":
             query = "&".join(part for part in scope.get("query_string", b"").decode("latin-1").split("&") if not part.startswith("key="))
             response = RedirectResponse(scope["path"] + (f"?{query}" if query else ""), status_code=303)
-            response.set_cookie(self.COOKIE, self.key, httponly=True, samesite="strict", secure=scope.get("scheme") == "https", max_age=7 * 24 * 3600)
+            response.set_cookie(self.COOKIE, self.key, httponly=True, samesite="lax", secure=scope.get("scheme") == "https", max_age=7 * 24 * 3600)
             return await response(scope, receive, send)
         if self._valid(given) or self._valid(cookies.get(self.COOKIE)):
             return await self.app(scope, receive, send)
@@ -885,7 +903,6 @@ def main() -> int:
     session = open_session(args, dt.datetime.now().replace(microsecond=0))
     factory = None if args.asr == "none" else whisper_factory(session.game.teams, session.game.sport, args.asr, args.model)
     server = GameServer(session, factory, record_audio=args.record_audio)
-    server.saved_version = session.version if args.load else None
     app = create_app(server, key=args.key)
 
     import uvicorn

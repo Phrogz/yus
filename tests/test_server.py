@@ -143,7 +143,8 @@ def test_pages_are_served(game):
             assert response.status_code == 200 and response.headers["content-type"].startswith("text/html"), path
         for path in ("/static/commentate.js", "/static/pcm-worklet.js", "/static/admin.js", "/static/game.js", "/static/style.css"):
             assert client.get(path).status_code == 200, path
-        assert "getUserMedia" in client.get("/static/commentate.js").text
+        script = client.get("/static/commentate.js")
+        assert "getUserMedia" in script.text and script.headers["cache-control"] == "no-cache"  # phones check for a new script
         assert client.get("/dashboard/").status_code == 503  # no dashboard given
         state = client.get("/api/state").json()
         assert state["summary"] == "Dump & Drizzle 0, Category 5 0" and state["commentators"] == [] and [t["name"] for t in state["teams"]] == ["Dump & Drizzle", "Category 5"]
@@ -279,7 +280,7 @@ def test_save_on_shutdown_and_resume(game, tmp_path):
     assert loaded.commentators == ["B / Other"] and loaded.snapshot().commentators[0].focus_team == "dark"
     assert [g.words[0].text for g in loaded.snapshot().transcripts["B / Other"]] == ["black", "picked"]
     resumed = GameServer(loaded, Factory(), clock=lambda: NOW + 60, tick=0.02)
-    resumed.saved_version = loaded.version
+    assert resumed.saved_version == loaded.version
     with client_for(resumed) as client, client.websocket_connect("/ws/audio") as ws:
         ws.send_json(hello(name="B / Other", stream="s2"))
         assert ws.receive_json()["focus_team"] == "dark"  # as saved
@@ -320,6 +321,21 @@ def test_a_newer_connection_replaces_the_older(game):
             send_audio(new, 0, 5)
             receive_until(new, lambda m: m.get("ack") == 4)
         assert server.streams["Gavin"].connection is None
+
+
+def test_a_failing_view_does_not_end_updates(game, monkeypatch):
+    server = make_server(game, None, Factory())
+
+    def broken(name):
+        raise RuntimeError("no view")
+
+    monkeypatch.setattr(server, "commentator_view", broken)
+    with client_for(server) as client, client.websocket_connect("/ws/audio") as ws:
+        ws.send_json(hello())
+        ws.receive_json()
+        assert receive_until(ws, lambda m: m.get("error"))["error"] == "RuntimeError: no view"
+        send_audio(ws, 0, 5)
+        receive_until(ws, lambda m: m.get("ack") == 4)
 
 
 def test_finish_commits_the_last_words_and_closes_the_game(game, tmp_path):
@@ -374,6 +390,7 @@ def test_key_is_required_when_set(game):
         assert client.get("/api/state?key=wrong").status_code == 403
         response = client.get("/api/state?events=0&key=sesame", follow_redirects=False)
         assert response.status_code == 303 and response.headers["location"] == "/api/state?events=0"
+        assert "samesite=lax" in response.headers["set-cookie"].lower()  # kept when the link was opened from another app
         assert client.get("/api/state?events=0").status_code == 200  # the cookie
         client.cookies.clear()
         with pytest.raises(WebSocketDisconnect) as closed, client.websocket_connect("/ws/audio") as ws:

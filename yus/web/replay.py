@@ -10,6 +10,7 @@ acknowledged every frame and transcribed everything. See docs/server.md.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import pathlib
@@ -122,6 +123,12 @@ class _Listener(threading.Thread):
             self._target = (last_seq, after)
 
     def run(self) -> None:
+        from websockets.exceptions import ConnectionClosed
+
+        with contextlib.suppress(ConnectionClosed):
+            self._listen()
+
+    def _listen(self) -> None:
         for raw in self.ws:
             message = json.loads(raw)
             if self.on_message:
