@@ -33,8 +33,8 @@ disagree on details such as who caught the disc, the throw type, or whether it w
    - An outcome that several commentators agreed on is never overridden, because an event they all missed is likelier.
    - A score that one commentator reported and another was silent on stands against that other commentator's next throw by
      the same team when it came less than 1 s (`SAME_BREATH`) after their report of the scoring throw, and the reporter's next
-     event has the other team with the disc. Such a throw is one throw heard as two: in the end-to-end runs, "flick huck to
-     kaia in the end zone for a score" became "Flick hot to Kaia Mann", a catch by "hot" and hot's dropped throw.
+     throw or Defense has the other team with the disc. Such a throw is one throw heard as two: in the end-to-end runs, "flick
+     huck to kaia in the end zone for a score" became "Flick hot to Kaia Mann", a catch by "hot" and hot's dropped throw.
 
 ## API
 
@@ -147,7 +147,10 @@ Re-merged with the session's offsets, both now score it (white 14, was 13; truth
 (0.968 / 0.796 and 0.975 / 0.793), and live re-merges as events arrive changed no settled event. The synthetic results above are
 unchanged: their commentators never hear one throw as two. Without the 1 s limit, against any later throws of the team, a
 mistaken score stood 10 times in the 80 synthetic games, and exact final scores fell from 60% to 52% (dual) and 22% to 18%
-(split). In the ground truth, one commentator's consecutive throws are at least 0.8 s apart.
+(split). In the ground truth, one commentator's consecutive throws are at least 0.8 s apart. Re-merging every 0.5 s, with
+most goals of the game heard as two (gaps of 0.4–1.5 s, either commentator silent) and the reporter lagging 0, 6 or 15 s, no
+settled event changed and `settled` never decreased (4 seeds). In 20 such games, every goal heard as two under 1 s apart was
+kept, and every one 1.5 s apart lost.
 
 ## Limitations
 

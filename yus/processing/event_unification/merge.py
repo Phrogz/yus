@@ -500,9 +500,9 @@ def _finish(streams: list[yus.EventStream], groups: list[_Group], offsets: list[
     events = [_finish_event(group, ctx) for group in groups]
     disputes = [dict(group.disputes) for group in groups]
     if repair:
-        reads = _repair_outcomes(events, groups, disputes, ctx)
+        reads, final = _repair_outcomes(events, groups, disputes, ctx), fixed
         fixed = next((p for p in range(fixed - 1, -1, -1) if isinstance(events[p], ultimate.Throw)), fixed)  # a throw depends on what follows, up to the next throw
-        fixed = min([fixed, *(p for p, last in reads.items() if last >= fixed)])  # a reported score, up to its reporter's next event
+        fixed = min([fixed, *(p for p, last in reads.items() if last >= final)])  # a reported score, up to its reporter's next event (its group, not its outcome)
     for i in range(1, len(events)):
         if events[i].when < events[i - 1].when:
             events[i] = events[i].model_copy(update={"when": events[i - 1].when})
@@ -604,7 +604,8 @@ def _repair_outcomes(events: list[yus.Event], groups: list[_Group], disputes: li
 def _heard_as_two(p: int, following: int, events: list[yus.Event], groups: list[_Group], ctx: _Context) -> tuple[bool, int]:
     """Whether the same team's throw at `following` is the throw at `p` heard as two: one commentator reported it within
     SAME_BREATH of their report of `p`, which they didn't call a score, and a commentator who did next reports the other team
-    with the disc, with only single reports of that between. Also returns the last event that tells."""
+    with the disc, with only single reports of that between. Events that don't tell who has the disc (a Substitution) are
+    skipped. Also returns the last event that tells."""
     extra = groups[following].items
     silent = [item for item in groups[p].items if len(extra) == 1 and item.stream == extra[0].stream and not getattr(item.event, "scored", True)]
     if not silent or extra[0].raw - silent[0].raw >= SAME_BREATH:
@@ -612,10 +613,14 @@ def _heard_as_two(p: int, following: int, events: list[yus.Event], groups: list[
     last = following
     for stream in {item.stream for item in groups[p].items if getattr(item.event, "scored", False)}:
         q = following + 1
-        while q < len(events) and stream not in _streams(groups[q]) and len(groups[q].items) == 1 and _hands_over(events[p], events[q], ctx):
+        while q < len(events):
+            if isinstance(events[q], (ultimate.Throw, ultimate.Defense)):
+                over, reporter = _hands_over(events[p], events[q], ctx), stream in _streams(groups[q])
+                if over and reporter:
+                    return True, q
+                if reporter or not over or len(groups[q].items) > 1:
+                    break
             q += 1
-        if q < len(events) and stream in _streams(groups[q]) and _hands_over(events[p], events[q], ctx):
-            return True, q
         last = max(last, q)
     return False, last
 

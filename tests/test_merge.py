@@ -259,6 +259,10 @@ def test_a_score_one_commentator_heard_stands(game: yus.Game, truth: list[yus.Ev
     assert goals(later.stream.events) == [13, 9]
     dropped = merged(*heard_as_two(truth, 0.56, completed=False)[:2])  # the white-focus commentator said it was dropped
     assert goals(dropped.stream.events) == [13, 9] and ("scored", "focus") in [(c.field, c.rule) for c in dropped.conflicts if c.event == goal]
+    sub = ultimate.Substitution(when=a.events[goal + 1].when + datetime.timedelta(seconds=2), team="black", player="Zach Ehler", sub_type="sub_on")
+    assert goals(merged(stream(*a.events[: goal + 2], sub, *a.events[goal + 2 :]), b).stream.events) == [14, 9]  # says nothing of who has the disc
+    on = b.events[goal].model_copy(update={"when": b.events[goal].when + datetime.timedelta(seconds=3), "player": "Kaia Mann", "receiver": "Joe Oaks", "scored": False})
+    assert goals(merged(a, stream(*b.events[: goal + 1], on, *b.events[goal + 1 :])).stream.events) == [13, 9]  # the reporter's team throws on
 
 
 def test_a_score_heard_as_two_settles_when_its_reporter_goes_on(game: yus.Game, truth: list[yus.Event]):
