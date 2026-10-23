@@ -74,9 +74,14 @@ PLAYER_COLUMNS = {
     "interceptions": "Int",
     "hucks": "Huck",
     "huck_completions": "Huck cmp",
+    "points_played": "Pts",
+    "minutes_on": "Min",
+    "plus_minus": "+/-",
 }
+ON_FIELD_COLUMNS = ("points_played", "minutes_on", "plus_minus")  # from `on_field`: blank when nobody said who is on the field
 PLAYER_KEY = (
     "G goals · A assists · HA hockey assists · D blocks · Thr throws · Cmp completions · TO turnovers · Tgt targets · Ctch catches · Drop drops or misses · Int interceptions"
+    " · Pts points played · Min minutes on the field · +/- goals for minus against while on (from substitutions; blank if none were said)"
 )
 
 
@@ -571,14 +576,22 @@ def _team_box(stats: GameStats) -> html.Table:
 
 
 def _player_rows(stats: GameStats) -> list[dict[str, Any]]:
+    """One row per player of the box score or of `on_field` (someone subbed on who never touched the disc)."""
+    box, on = stats.player_box.to_dict("index"), stats.on_field.to_dict("index")
     rows = []
-    for (team, player), row in stats.player_box.iterrows():
+    for team, player in [*box, *(key for key in on if key not in box)]:
+        counts, field = box.get((team, player)), on.get((team, player))
         record: dict[str, Any] = {"team": team, "player": player}
         for column in PLAYER_COLUMNS:
-            if column not in record:
-                value = row[column]
+            if column not in record and column not in ON_FIELD_COLUMNS:
+                value = counts[column] if counts is not None else 0
                 record[column] = None if pd.isna(value) else (float(value) if column == "completion_pct" else int(value))
-        record["provisional"] = int(bool(row["provisional"]))
+        record |= {
+            "points_played": int(field["points_played"]) if field is not None else None,
+            "minutes_on": round(float(field["time_on_s"]) / 60, 1) if field is not None else None,
+            "plus_minus": int(field["plus_minus"]) if field is not None else None,
+        }
+        record["provisional"] = int(any(bool(found["provisional"]) for found in (counts, field) if found is not None))
         rows.append(record)
     return rows
 

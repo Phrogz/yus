@@ -325,3 +325,14 @@ def test_yus_stats_writes_the_on_field_tables_when_there_are_substitutions(teams
     assert {"on_field", "lines", "shifts"} <= {path.stem for path in (tmp_path / "csv").iterdir()}
     assert cli.main([*args, "--tables", "on_field"]) == 0
     assert "== on_field (21 rows) ==" in capsys.readouterr().out
+
+
+def test_the_dashboard_shows_points_minutes_and_plus_minus():
+    from yus.web.dashboard import _player_rows
+
+    events = [*line("white", "a b c d e", 0), throw("white", "a", "b", 60, scored=True), sub("white", "e", OFF, 90), sub("white", "f", ON, 91)]
+    events.append(throw("black", "x", "y", 120, scored=True))
+    rows = {row["player"]: row for row in _player_rows(compute_stats(yus.EventStream(events=events)))}
+    assert (rows["a"]["throws"], rows["a"]["points_played"], rows["a"]["minutes_on"], rows["a"]["plus_minus"]) == (1, 2, 2.0, 0)
+    assert (rows["f"]["throws"], rows["f"]["minutes_on"], rows["f"]["plus_minus"]) == (0, 0.5, -1)  # subbed on, never touched the disc
+    assert rows["x"]["minutes_on"] is None  # nobody said who plays for black
