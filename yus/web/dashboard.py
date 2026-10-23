@@ -584,7 +584,7 @@ def _player_rows(stats: GameStats) -> list[dict[str, Any]]:
         record: dict[str, Any] = {"team": team, "player": player}
         for column in PLAYER_COLUMNS:
             if column not in record and column not in ON_FIELD_COLUMNS:
-                value = counts[column] if counts is not None else 0
+                value = counts[column] if counts is not None else None if column == "completion_pct" else 0  # no throws: no percentage
                 record[column] = None if pd.isna(value) else (float(value) if column == "completion_pct" else int(value))
         record |= {
             "points_played": int(field["points_played"]) if field is not None else None,

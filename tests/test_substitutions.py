@@ -335,6 +335,21 @@ def test_on_field_from_a_line_up_and_swaps():
     assert stats.shifts.query("player == 'f'")[["state", "duration_s"]].values.tolist() == [["off", 20.0], ["on", 20.0]]
 
 
+def test_a_swap_said_just_after_a_goal_was_made_between_points():
+    start = [*line("white", "a b c d e", 0), throw("white", "a", "b", 10, scored=True)]
+    end = [throw("black", "x", "y", 20), throw("black", "y", "x", 30, scored=True)]
+    stats = compute_stats(yus.EventStream(events=[*start, sub("white", "b", OFF, 13), sub("white", "f", ON, 14), *end]), line_size=5)
+    white = stats.on_field.loc["white", ["points_played", "time_on_s", "goals_for", "goals_against"]]
+    assert white.loc[["a", "b", "f"]].values.tolist() == [[2, 30.0, 1, 1], [1, 10.0, 1, 0], [1, 20.0, 0, 1]]  # b scored, then left
+    assert stats.lines.loc["white", ["points", "time_s", "goals_for", "goals_against"]].to_dict("index") == {
+        "a, b, c, d, e": {"points": 1, "time_s": 10.0, "goals_for": 1, "goals_against": 0},
+        "a, c, d, e, f": {"points": 1, "time_s": 20.0, "goals_for": 0, "goals_against": 1},
+    }
+    for late in ([end[0], sub("white", "b", OFF, 21), sub("white", "f", ON, 22)], [sub("white", "b", OFF, 21), sub("white", "f", ON, 22)]):
+        events = [*start, *late, end[-1]]  # said after the next point's first throw, or 11 s after the goal: made during the point
+        assert compute_stats(yus.EventStream(events=events), line_size=5).on_field.loc[("white", "b"), "points_played"] == 2
+
+
 def test_unknown_on_field_state_is_not_guessed():
     events = [
         sub("white", "a", ON, 0),
@@ -383,10 +398,10 @@ def test_on_field_stats_of_the_subbing_commentary(teams: list[yus.Team], resolve
     stats = compute_stats(resolver.resolve_stream(truth), teams)
     assert stats.score == {"Dump & Drizzle": 10, "dark": 9}
     white = stats.on_field.loc["Dump & Drizzle"]
-    assert len(white) == 9 and white.loc["Tristan Weber", "points_played"] == 16
+    assert len(white) == 9 and white.loc["Tristan Weber", "points_played"] == 15
     assert (white["goals_for"] + white["goals_against"] + white["goals_unknown"] <= 19).all()
     known = stats.lines.drop(index="unknown", level="line")
-    assert known.groupby("team")["time_s"].sum().round().to_dict() == {"Dump & Drizzle": 519.0, "dark": 645.0}
+    assert known.groupby("team")["time_s"].sum().round().to_dict() == {"Dump & Drizzle": 516.0, "dark": 650.0}
     assert (stats.shifts["duration_s"] > 0).all() and set(stats.shifts["state"]) == {"on", "off", "unknown"}
     extracted = compute_stats(resolver.resolve_stream(extract_events(transcript, teams, timeout=6.0)), teams)
     assert set(extracted.on_field.index.get_level_values("team")) == {"Dump & Drizzle", "dark"}
@@ -420,5 +435,5 @@ def test_the_dashboard_shows_points_minutes_and_plus_minus():
     events.append(throw("black", "x", "y", 120, scored=True))
     rows = {row["player"]: row for row in _player_rows(compute_stats(yus.EventStream(events=events)))}
     assert (rows["a"]["throws"], rows["a"]["points_played"], rows["a"]["minutes_on"], rows["a"]["plus_minus"]) == (1, 2, 2.0, 0)
-    assert (rows["f"]["throws"], rows["f"]["minutes_on"], rows["f"]["plus_minus"]) == (0, 0.5, -1)  # subbed on, never touched the disc
+    assert (rows["f"]["throws"], rows["f"]["completion_pct"], rows["f"]["minutes_on"], rows["f"]["plus_minus"]) == (0, None, 0.5, -1)  # subbed on, no disc
     assert rows["x"]["minutes_on"] is None  # nobody said who plays for black

@@ -93,12 +93,17 @@ transcription does. So a stream written with `-07:00` offsets gives the same tab
     the first thing said, unknown. After the last, the state of the last substitution stays, unless something said since
     disagrees; a throw, catch or D alone says only that they were on then.
   - Substitutions of one team said within 5 s (`BURST`), with no goal between, are one swap, made at the first one's time.
+  - A swap said within 10 s of a goal (`AFTER_GOAL`), with no throw or D since, was made between points: at the goal's time, so
+    that a player subbed off just after a goal gets neither the next point nor its seconds. The goal itself still counts the
+    players on before the swap. A later swap, or one after the next point's first throw or D, was made when said (subs here are
+    made on the fly: in the subbing commentary, substitutions are said all through points of 20-60 s).
   - When `line_size` players of a team are known to be on, the rest are off, and the line is known. When more would be on, a
     substitution was missed, and every player of that team is unknown until it clears up.
   - `points_played`: points in which the player was on at some time, or threw, caught or made a D. `time_on_s` and
     `time_unknown_s` count seconds from `start` to the last event. `goals_for` and `goals_against` count goals while the player
     was on (at the goal's moment: subs said after it count for the next point), `plus_minus` is their difference, and
     `goals_unknown` counts goals while their state was unknown. Nothing unknown is guessed or counted as on or off.
+  - The dashboard leaves the completion percentage of a player who never threw blank (also one only subbed on).
   - `lines`: the team's five as one label (names sorted, joined by ", "), with `unknown` for the time the line is not known. A
     line's `points` are the points it was on the field for at some time.
   - A substitution with no team gets its player's: the one team of their other substitutions, else of their throws, catches and Ds.
@@ -149,17 +154,19 @@ The stats are exact for the events they are given; their accuracy is that of eve
 [extraction.md](extraction.md#substitutions)), names resolved with the team file and the game's descriptions file:
 
 - From the draft truth (177 substitutions, 19 goals), each player's state is known for 87% of player-seconds. White's line of five
-  is known for 519 s of 1,015, dark's for 645 s. The commentator missed some substitutions; each one leaves a player unknown
+  is known for 516 s of 1,015, dark's for 650 s. The commentator missed some substitutions; each one leaves a player unknown
   until they are mentioned again.
-- From the extractor's events (`timeout=6`), wherever both know a player's state, they agree for 98.8% of player-seconds, but the
+- Points played: 37 of the truth's 262 player-point credits came from under 10 s on the field after a goal, with no play (a
+  player subbed off 3 s after a goal got the next point). With swaps said just after a goal made at the goal, 1 of 228 does.
+- From the extractor's events (`timeout=6`), wherever both know a player's state, they agree for 98.5% of player-seconds, but the
   extractor's stream knows it for only 54% (truth: 87%). Whisper's mishearings split players ("Sarayan", "Sorayan" and "Ryan" are
   Serayan), and white's line is known for 3 s. With those mishearings resolved too (as team-file mondegreens would), the states
-  are known for 78% and agree for 99.9%; playing time is off by a median of 4 s (white) and 2 s (dark); white's line is known for
-  499 s (truth 519), dark's for 284 s (truth 645: its first substitutions have no team). Plus-minus differs for most players,
-  because the extractor finds 14 of the 19 goals (goals said as "Glasses for a score" with no throw) and gives one to the wrong
-  team.
-- Recomputing takes 11 ms for this game (best of 15). The bundled game, which has no substitutions, takes as long as before
-  (7–8 ms on a busy machine): the three new tables are empty, and empty tables now come from a cache.
+  are known for 78% and agree for 99.6% (99.9% before swaps were moved to goals: the extractor misses goals, so it moves fewer);
+  playing time is off by a median of 5 s (white) and 4 s (dark); white's line is known for 503 s (truth 516), dark's for 280 s
+  (truth 650: its first substitutions have no team). Plus-minus differs for most players, because the extractor finds 14 of the
+  19 goals (goals said as "Glasses for a score" with no throw) and gives one to the wrong team.
+- Recomputing takes 10 ms for this game (best of 15). The bundled game, which has no substitutions, takes 7 ms: the three new
+  tables are empty, and empty tables now come from a cache.
 
 ## Limitations
 

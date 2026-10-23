@@ -7,7 +7,9 @@ on" then "kaia off" means on in between; "kaia on" then a throw by kaia, on in b
 "kaia off" then a throw by kaia, means a substitution was missed in between, so unknown. Before the first thing said about a player
 their state is unknown. After the last, the state of their last substitution stays (unless something said since disagrees); a
 throw, catch or D only says they were on then. Substitutions of one team said within `BURST` seconds of each other, with no goal
-between, count as made together, at the first one's time ("26 off. glasses on." is one swap). When `line_size` of a team's players
+between, count as made together, at the first one's time ("26 off. glasses on." is one swap). A swap said within `AFTER_GOAL`
+seconds of a goal, with no throw or D since, was made between points: at the goal's time, though the goal itself counts the
+players on before it (so that "26 off", said 3 s after a goal, credits 26 with neither the next point nor its seconds). When `line_size` of a team's players
 are known to be on, everyone else on it is off and the line is known; when more than `line_size` would be on, a substitution was
 missed, and the on-field state of all of the team's players is unknown until that clears up. Nothing is guessed: unknown time and
 goals are counted as unknown.
@@ -24,6 +26,8 @@ from typing import Any
 ON, OFF, UNKNOWN = "on", "off", "unknown"
 BURST = 5.0
 """Seconds between substitutions of one team said as one swap."""
+AFTER_GOAL = 10.0
+"""Seconds after a goal within which a swap said before any throw or D was made between points."""
 UNKNOWN_LINE = "unknown"
 """`lines` row label for the time a team's line is not known exactly."""
 
@@ -37,13 +41,14 @@ class _Seen:
     after: str  # and just after
     provisional: bool
     point: int | None = None  # for a play (a throw, catch or D): the point it was made in; None for a substitution
+    between: bool = False  # a substitution made between points, at the goal's time (`when`): the goal does not see it
 
 
 class _Player:
     """One player's states over time, from what was said about them."""
 
     def __init__(self, seen: list[_Seen], start: datetime.datetime, end: datetime.datetime):
-        seen = sorted(seen, key=lambda s: s.when)
+        seen = sorted(seen, key=lambda s: (s.when, s.between))
         self.starts = [start]
         self.states = [UNKNOWN]
         self.said: dict[datetime.datetime, str] = {}  # the state at each moment something was said: a throw by kaia, kaia was on
@@ -56,7 +61,8 @@ class _Player:
             else:
                 state = item.after if following.before == item.after else UNKNOWN
             when = min(max(item.when, start), end)
-            self.said[when] = item.after
+            if not item.between:
+                self.said[when] = item.after
             if when == self.starts[-1]:
                 self.states[-1] = state
             else:
@@ -64,9 +70,12 @@ class _Player:
                 self.states.append(state)
 
     def at(self, when: datetime.datetime, moment: bool = False) -> str:
-        """The state from `when` on (until the next change); with `moment`, at `when` itself, as said then if anything was."""
-        found = self.said.get(when) if moment else None
-        return found if found is not None else self.states[bisect.bisect_right(self.starts, when) - 1]
+        """The state from `when` on (until the next change); with `moment`, at `when` itself: as said then if anything was, else as
+        just before (substitutions made at a goal, between points, follow it)."""
+        if not moment:
+            return self.states[bisect.bisect_right(self.starts, when) - 1]
+        found = self.said.get(when)
+        return found if found is not None else self.states[max(bisect.bisect_left(self.starts, when) - 1, 0)]
 
 
 def on_field(
@@ -105,22 +114,25 @@ def on_field(
 
 def _observations(throws: list[Row], defenses: list[Row], substitutions: list[Row], goals: list[datetime.datetime]) -> dict[str, dict[str, list[_Seen]]]:
     """What was said about each player of each team with substitutions, from its first substitution on: team -> player -> seen."""
+    played = sorted(row["when"] for row in throws + defenses)
     first: dict[str, datetime.datetime] = {}
     found: dict[str, dict[str, list[_Seen]]] = {}
     last: dict[str, datetime.datetime] = {}
+    made: dict[str, tuple[datetime.datetime, bool]] = {}  # when the team's latest swap was made, and whether between points
     for row in sorted((row for row in substitutions if row["team"] is not None and row["player"] is not None), key=lambda row: row["when"]):
-        team, when = row["team"], row["when"]
+        team, said = row["team"], row["when"]
+        if team in last and (said - last[team]).total_seconds() <= BURST and bisect.bisect_right(goals, last[team]) == bisect.bisect_right(goals, said):
+            when, between = made[team]  # one swap: made with its first substitution
+        else:
+            goal = goals[k - 1] if (k := bisect.bisect_right(goals, said)) else None
+            between = goal is not None and (said - goal).total_seconds() <= AFTER_GOAL and bisect.bisect_right(played, goal) == bisect.bisect_right(played, said)
+            when = goal if between and goal is not None else said
+            made[team] = when, between
         if team not in first:
             first[team], found[team] = when, collections.defaultdict(list)
-        elif (when - last[team]).total_seconds() <= BURST and bisect.bisect_right(goals, last[team]) == bisect.bisect_right(goals, when):
-            when = found[team]["\0burst"][0].when  # one swap: made when its first substitution was said
-        if when == row["when"]:
-            found[team]["\0burst"] = [_Seen(when, OFF, OFF, False)]
-        last[team] = row["when"]
+        last[team] = said
         on = row["sub_type"] == "sub_on"
-        found[team][row["player"]].append(_Seen(when, OFF if on else ON, ON if on else OFF, row["provisional"]))
-    for players in found.values():
-        players.pop("\0burst", None)
+        found[team][row["player"]].append(_Seen(when, OFF if on else ON, ON if on else OFF, row["provisional"], between=between))
     plays = [(throw, name) for throw in throws for name in (throw["player"], throw["receiver"])] + [(defense, defense["player"]) for defense in defenses]
     for row, name in plays:
         if name in found.get(row["team"], {}) and row["when"] >= first[row["team"]]:  # someone substituted for the team: on then
