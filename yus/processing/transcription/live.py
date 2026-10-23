@@ -16,6 +16,7 @@ import math
 import pathlib
 import statistics
 import sys
+import threading
 import time
 from collections import Counter
 from typing import Any, Callable, NamedTuple, Protocol, Sequence
@@ -83,27 +84,54 @@ def is_hallucination(segment: Segment) -> bool:
     return " ".join(tr.phrase_key(text)) in HALLUCINATIONS or any(echo in text.lower() for echo in PROMPT_ECHOES)
 
 
+def word_probability(word: dict[str, Any]) -> float:
+    """A decoded word's probability; 0 when missing or NaN (a NaN would make the transcript's JSON invalid)."""
+    probability = float(word.get("probability") or 0.0)
+    return 0.0 if math.isnan(probability) else probability
+
+
 def segment_logprob(segment: Segment) -> float:
     """The segment's avg_logprob or, when mlx-whisper reports NaN, the mean log probability of its words."""
     logprob = float(segment.get("avg_logprob") or 0.0)
     if math.isnan(logprob):
-        probs = [float(w.get("probability") or 0.0) for w in segment.get("words") or []]
+        probs = [word_probability(w) for w in segment.get("words") or []]
         return statistics.fmean(math.log(max(p, 1e-6)) for p in probs) if probs else LOW_LOGPROB
     return logprob
 
 
+def _loop_at(keys: Sequence[str], i: int) -> int:
+    """The length of the phrase a loop starting at `i` repeats, or 0."""
+    for n in range(1, 21):
+        reps = 3 if n < 6 else 2
+        if i + n * reps <= len(keys) and all(keys[i + k * n : i + (k + 1) * n] == keys[i : i + n] for k in range(1, reps)):
+            return n
+    return 0
+
+
 def strip_loops(words: list[TimedWord]) -> list[TimedWord]:
-    """Cut a hypothesis where a decoding loop starts, keeping the first repetition. Play-by-play repeats a short phrase at most twice
-    in a row ("backhand to george, backhand to hat"), so a loop is a 1-5 word phrase said 3+ times in a row, or a 6-20 word phrase twice."""
+    """Drop the repeats of decoding loops from a hypothesis, keeping the first copy and every other word. Play-by-play repeats a short
+    phrase at most twice in a row ("backhand to george, backhand to hat"), so a loop is a 1-5 word phrase said 3+ times in a row, or
+    a 6-20 word phrase twice. A partial repeat right after the loop goes too (2+ words, or any at the end of the decode): Whisper often
+    leaves a loop mid-phrase. Words after a loop are kept: they are usually real speech, and a phrase that was really said twice loses
+    only its second copy."""
     keys = [_key(w) for w in words]
-    for i in range(len(keys)):
-        for n in range(1, 21):
-            reps = 3 if n < 6 else 2
-            if i + n * reps > len(keys):
-                break
-            if all(keys[i + k * n : i + (k + 1) * n] == keys[i : i + n] for k in range(1, reps)):
-                return words[: i + n]
-    return words
+    kept: list[TimedWord] = []
+    i = 0
+    while i < len(keys):
+        if not (n := _loop_at(keys, i)):
+            kept.append(words[i])
+            i += 1
+            continue
+        kept += words[i : i + n]
+        i += n
+        while keys[i : i + n] == keys[i - n : i]:
+            i += n
+        partial = 0
+        while partial < n - 1 and i + partial < len(keys) and keys[i + partial] == keys[i - n + partial]:
+            partial += 1
+        if partial >= 2 or i + partial == len(keys):
+            i += partial
+    return kept
 
 
 def hypothesis_words(segments: Sequence[Segment], offset: float) -> list[TimedWord]:
@@ -115,7 +143,7 @@ def hypothesis_words(segments: Sequence[Segment], offset: float) -> list[TimedWo
         logprob = segment_logprob(seg)
         for w in seg.get("words") or []:
             if tr.normalize_token(text := str(w["word"]).strip()):  # not just punctuation
-                words.append(TimedWord(text, offset + float(w["start"]), offset + float(w["end"]), float(w.get("probability") or 0.0), logprob))
+                words.append(TimedWord(text, offset + float(w["start"]), offset + float(w["end"]), word_probability(w), logprob))
     return strip_loops(words)
 
 
@@ -151,6 +179,18 @@ def after_commit_point(hypothesis: list[TimedWord], committed: Sequence[TimedWor
     return [w for w in hypothesis if (w.start + w.end) / 2 > commit_point]
 
 
+def unheard(previous: Sequence[TimedWord], final: Sequence[TimedWord]) -> list[TimedWord]:
+    """The leading words of the previous decode's uncommitted hypothesis that the final decode did not hear again: those before the
+    final decode's first word, found by its text (within 1 s, for drift) or else by time; all of them if the final decode heard nothing."""
+    if not final:
+        return list(previous)
+    first = final[0]
+    for j, word in enumerate(previous):
+        if _key(word) == _key(first) and abs(word.start - first.start) <= 1.0:
+            return list(previous[:j])
+    return [w for w in previous if w.end <= first.start]
+
+
 class LiveTranscriber:
     """Turn audio arriving in real time into a Transcript, a group at a time.
 
@@ -179,9 +219,10 @@ class LiveTranscriber:
         transcribe: Transcribe | None = None,
         gap_s: float = 0.6,
     ) -> None:
-        if not (0 < period_s and force_s + period_s < window_s):
+        self._step = int((window_s - force_s - period_s) * SAMPLE_RATE)  # samples per decode when a backlog is decoded in steps
+        if not (0 < period_s and self._step >= 1):
             raise ValueError(f"need 0 < period_s and force_s + period_s < window_s, got period_s={period_s}, force_s={force_s}, window_s={window_s}")
-        self.start = start
+        self.start = tr.local_naive(start)
         self.prompt = prompt or None
         self.replacements = replacements or {}
         self.sample_rate = sample_rate
@@ -221,8 +262,10 @@ class LiveTranscriber:
     @property
     def horizon(self) -> dt.datetime:
         """The time up to which every word has been returned in a group, for EventExtractor.advance(): the start of the first word of the
-        open group or of the pending hypothesis, or with neither, the end of the last committed word or force_s before the end of the
-        latest decode (a later decode rarely adds an earlier word), whichever is later. It never decreases; after flush() it is the end."""
+        open group or of the pending hypothesis or, with neither, the end of the last committed word or the start of the next decode's
+        window (`window_s - period_s` before the end of the latest decode: no later decode hears earlier audio), whichever is later. A word
+        can still start a little before it when a decode moves its time (about 1% of words, by under 1 s, in replays of the measured game).
+        It never decreases; after flush() it is the end of the audio."""
         return self.start + dt.timedelta(seconds=round(self.audio_s if self._flushed else self._horizon, 3))
 
     def feed(self, samples: np.ndarray) -> list[yus.TranscriptGroup]:
@@ -231,19 +274,22 @@ class LiveTranscriber:
         is decoded in steps so that no audio goes undecoded."""
         if self._flushed:
             raise RuntimeError("feed() after flush(): the stream has ended")
-        audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+        audio = np.asarray(samples, dtype=np.float32)
+        if audio.size != max(audio.shape, default=0):
+            raise ValueError(f"feed() takes mono audio, got samples of shape {audio.shape}")
+        audio = audio.reshape(-1)
         if self._resampler:
             audio = self._resampler.resample(audio)
         groups: list[yus.TranscriptGroup] = []
-        step = int((self.window_s - self.force_s - self.period_s) * SAMPLE_RATE)
-        for i in range(0, len(audio), step):
-            self._append(audio[i : i + step])
+        for i in range(0, len(audio), self._step):
+            self._append(audio[i : i + self._step])
             if self._received - self._decoded >= self.period_s * SAMPLE_RATE:
                 groups += self._decode(final=False)
         return groups
 
     def flush(self) -> list[yus.TranscriptGroup]:
-        """End the stream: decode what is left, commit every word, and return the remaining groups."""
+        """End the stream: decode what is left, commit every word (the final decode's, and the previous decode's words before them that
+        it did not hear again), and return the remaining groups."""
         if self._flushed:
             return []
         if self._resampler:
@@ -270,7 +316,8 @@ class LiveTranscriber:
         segments = self._transcribe(self._buffer, self.prompt) if len(self._buffer) else []
         compute = time.perf_counter() - began
         new = after_commit_point(hypothesis_words(segments, now - len(self._buffer) / SAMPLE_RATE), self.committed)
-        if final:
+        if final:  # commit everything, keeping what the previous decode heard and this one did not
+            new = unheard(self._pending, new) + new
             n = len(new)
         else:
             held = _ended_prefix(new[: _agreed_prefix(new, self._pending)], now - self.hold_s)
@@ -279,7 +326,7 @@ class LiveTranscriber:
         self._pending = new[n:]
         if self._open and self._paused(now):
             groups.append(self._close())
-        delivered = max(self.committed[-1].end if self.committed else 0.0, now - self.force_s)
+        delivered = max(self.committed[-1].end if self.committed else 0.0, now + self.period_s - self.window_s)
         self._horizon = max(self._horizon, min([delivered] + [words[0].start for words in (self._open, self._pending) if words]))
         self.passes.append(DecodePass(end=now, compute=compute, words=len(new), committed=n))
         return groups
@@ -349,8 +396,12 @@ class Whisper(Protocol):
     def count_tokens(self, text: str) -> int: ...
 
 
+_MLX_LOCK = threading.Lock()
+
+
 class MlxWhisper:
-    """Decode with mlx-whisper on an Apple Silicon GPU."""
+    """Decode with mlx-whisper on an Apple Silicon GPU. mlx-whisper caches one model per repo, shared by every instance, so decodes
+    run one at a time (several commentators' transcribers in threads take turns on the GPU)."""
 
     def __init__(self, model: str = "large-v3-turbo", language: str = "en", **options: Any) -> None:
         import mlx.core as mx  # type: ignore[import-not-found]
@@ -364,11 +415,12 @@ class MlxWhisper:
         self.options = {**DECODE_OPTIONS, "language": language, **options}
 
     def __call__(self, audio: np.ndarray, prompt: str | None) -> list[Segment]:
-        self._model.decode = OneWindow(self._model.decode)
-        try:
-            return list(self._transcribe(audio, path_or_hf_repo=self.repo, initial_prompt=prompt, verbose=None, **self.options)["segments"])
-        finally:
-            del self._model.decode  # back to the class's decode
+        with _MLX_LOCK:  # the patched model is shared by every MlxWhisper of the same model, in any thread
+            self._model.decode = OneWindow(self._model.decode)
+            try:
+                return list(self._transcribe(audio, path_or_hf_repo=self.repo, initial_prompt=prompt, verbose=None, **self.options)["segments"])
+            finally:
+                del self._model.decode  # back to the class's decode
 
     def count_tokens(self, text: str) -> int:
         return self._count(text)
@@ -444,6 +496,7 @@ class LiveTimings(pydantic.BaseModel):
     """When words and groups were committed during a (simulated) live run, in seconds of stream time."""
 
     audio: float = 0.0
+    speed: float = pydantic.Field(0.0, description="How fast the audio was played: 1 in real time, 2 twice as fast; 0 on a simulated real-time clock.")
     compute: float = pydantic.Field(0.0, description="Seconds spent in feed() and flush(), nearly all of it decoding.")
     word_latency: list[float] = pydantic.Field(default_factory=list, description="For each committed word: from the end of the word to its commit.")
     group_latency: list[float] = pydantic.Field(default_factory=list, description="For each group: from the end of its last word to the group's close.")
@@ -451,8 +504,8 @@ class LiveTimings(pydantic.BaseModel):
 
     @property
     def busy(self) -> float:
-        """Fraction of the time the decoder was busy (GPU busy fraction)."""
-        return self.compute / self.audio if self.audio else 0.0
+        """Fraction of the playing time the decoder was busy (GPU busy fraction): the audio plays in audio / speed seconds."""
+        return self.compute * (self.speed or 1.0) / self.audio if self.audio else 0.0
 
     def summary(self) -> str:
         def stats(values: list[float]) -> str:
@@ -461,7 +514,7 @@ class LiveTimings(pydantic.BaseModel):
         return (
             f"Word latency (end of word -> committed): {stats(self.word_latency)} over {len(self.word_latency)} words\n"
             f"Group latency (end of group -> closed): {stats(self.group_latency)} over {len(self.group_latency)} groups\n"
-            f"GPU busy decoding {self.busy:.0%} of the time ({self.compute:.0f} s for {self.audio:.0f} s of audio)"
+            f"GPU busy decoding {self.busy:.0%} of the time ({self.compute:.0f} s for {self.audio:.0f} s of audio{f' at {self.speed:g}x' if self.speed else ''})"
         )
 
 
@@ -488,7 +541,7 @@ def simulate(
     `on_groups(groups, now)` is called with each batch of completed groups."""
     sample_rate = transcriber.sample_rate
     block = max(1, int(block_s * sample_rate))
-    timings = LiveTimings(audio=len(audio) / sample_rate)
+    timings = LiveTimings(audio=len(audio) / sample_rate, speed=speed)
     began = clock()
     pos, now = 0, 0.0
     while pos < len(audio):

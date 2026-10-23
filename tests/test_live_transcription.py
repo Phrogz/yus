@@ -7,6 +7,8 @@ import os
 import pathlib
 import random
 import re
+import threading
+import time
 from collections import Counter
 from types import SimpleNamespace
 from typing import Callable
@@ -139,8 +141,26 @@ def test_horizon_is_where_every_earlier_word_has_been_returned() -> None:
     groups += lt.flush()
     assert all(w.start >= horizon for horizon, n in horizons for g in groups[n:] for w in g.words)
     assert [h for h, _ in horizons] == sorted(h for h, _ in horizons)
-    assert horizons[17][0] == T0 + dt.timedelta(seconds=5.0)  # at 9 s: nothing heard after "glasses" (3.9 s) for force_s
+    assert horizons[17][0] == T0 + dt.timedelta(seconds=3.9)  # at 9 s: nothing heard after "glasses" (3.9 s); the next window starts at -8 s
     assert lt.horizon == T0 + dt.timedelta(seconds=25.0)
+
+
+def test_horizon_holds_when_a_later_decode_hears_earlier_words() -> None:
+    """Decodes that hear nothing do not move horizon past audio a later decode can still hear: only past the next window's start."""
+
+    def deaf(call: int, words: Script, start: float, end: float) -> Script:
+        return [] if call < 3 else words  # the decodes at 3, 6 and 9 s hear nothing; the one at 12 s hears "black pulls" (1-1.6 s)
+
+    lt = transcriber(FakeWhisper(speak("black pulls", 1.0) + speak("flick to kaia", 30.0), deaf))
+    audio = ramp(45.0)
+    returned: list[tuple[dt.datetime, yus.TranscriptGroup]] = []
+    for pos in range(0, len(audio), SR // 2):
+        before = lt.horizon
+        returned += [(before, g) for g in lt.feed(audio[pos : pos + SR // 2])]
+        if pos == 27 * SR:  # silence since "pulls": horizon is the start of the window of the next decode (at 30 s)
+            assert lt.horizon == T0 + dt.timedelta(seconds=lt.passes[-1].end + lt.period_s - lt.window_s) == T0 + dt.timedelta(seconds=10.0)
+    assert [g.interpretations[0].transcript for _, g in returned] == ["black pulls", "flick to kaia"]
+    assert all(w.start >= horizon for horizon, g in returned for w in g.words)  # with force_s as the bound, "black" came 4 s behind it
 
 
 def commit_times(lt: live.LiveTranscriber, seconds: float, block_s: float = 0.5) -> dict[str, float]:
@@ -232,11 +252,37 @@ def test_after_commit_point(committed: Script, hypothesis: Script, expected: lis
         ("backhand to george backhand to hat backhand to george", "backhand to george backhand to hat backhand to george"),  # play-by-play, not a loop
         ("dump to kaia dump to kaia swing to joe", "dump to kaia dump to kaia swing to joe"),  # one repeat is fine
         ("picked up by pikachu, a flick to the end zone. picked up by pikachu, a flick to the end zone.", "picked up by pikachu, a flick to the end zone."),
+        ("caught by naked for a score caught by naked for a score", "caught by naked for a score"),  # a 6-word phrase twice at the very end
+        # Only the repeats go, not the words after them: real speech (here at 190 s in the game, a phrase that was really said twice) ...
+        (
+            "backhand to tristan, backhand to glasses, flick to tristan, backhand to glasses, flick to kaia, dropped",
+            "backhand to tristan, backhand to glasses, flick to kaia, dropped",
+        ),
+        ("the sun on dark. the sun on dark. the sun on dark. backhand swing to red stripe.", "the sun on dark. backhand swing to red stripe."),  # ... at 69 s
+        # ... and a partial repeat after the loop, of 2+ words or at the end of the decode, goes too
+        ("caught by pikachu for a score. caught by naked for a score. caught by naked for a score. backhand huck", "caught by pikachu for a score. caught by naked backhand huck"),
+        ("to kaia to kaia to kaia to", "to kaia"),
+        ("dump to kaia dump to kaia dump to kaia dump swing", "dump to kaia dump swing"),
     ],
 )
 def test_strip_loops(text: str, expected: str) -> None:
     words = [live.TimedWord(t, i, i + 1) for i, t in enumerate(text.split())]
     assert " ".join(w.text for w in live.strip_loops(words)) == expected
+
+
+def test_words_after_a_repeated_phrase_are_committed_on_time() -> None:
+    """A phrase said twice (as at 190 s in the game) loses its second copy, but the words after it are committed as usual, not once its
+    first copy has left the window (the whole decode used to be cut where the repeat began, so "to kaia" came 18 s late)."""
+    play = speak("backhand to tristan backhand to glasses flick to tristan backhand to glasses flick", 1.0, 0.4) + speak("to kaia dropped", 7.5)
+    play += speak("gloves picks it up for dark", 9.0)
+    lt = transcriber(FakeWhisper(play))
+    audio = ramp(30.0)
+    committed_at: list[float] = []
+    for pos in range(0, len(audio), SR // 2):
+        lt.feed(audio[pos : pos + SR // 2])
+        committed_at += [lt.audio_s] * (len(lt.committed) - len(committed_at))
+    assert [w.text for w in lt.committed] == "backhand to tristan backhand to glasses flick to kaia dropped gloves picks it up for dark".split()
+    assert max(at - w.end for w, at in zip(lt.committed, committed_at)) <= lt.period_s + lt.force_s
 
 
 def test_hypothesis_words_are_in_stream_time_without_punctuation_only_words() -> None:
@@ -339,6 +385,33 @@ def test_flush_without_new_audio_commits_the_last_hypothesis() -> None:
     assert len(fake.windows) == 1
 
 
+def test_flush_keeps_the_last_hypothesis_when_the_final_decode_hears_nothing() -> None:
+    def deaf_at_the_end(call: int, words: Script, start: float, end: float) -> Script:
+        return words if call == 0 else []  # e.g. the final decode was dropped as a hallucination
+
+    lt = transcriber(FakeWhisper(speak("for the score", 1.0), deaf_at_the_end))
+    lt.feed(ramp(3.0))
+    lt.feed(ramp(3.5)[3 * SR :])
+    assert lt.pending_text == "for the score"
+    assert group_texts(lt.flush()) == ["for the score"]
+
+
+@pytest.mark.parametrize(
+    ("final", "expected"),
+    [
+        ([], ["for", "the", "score"]),  # heard nothing
+        (speak("black pulls", 5.0), ["for", "the", "score"]),  # heard only later words
+        (speak("score black", 1.6), ["for", "the"]),  # heard the end of it
+        (speak("for the score", 1.3), []),  # heard it all, its times moved
+        ([("for", 1.0, 1.3), ("a", 1.3, 1.6), ("score", 1.6, 1.9)], []),  # heard it differently
+        ([("four", 1.0, 1.3), ("the", 1.3, 1.6), ("score", 1.6, 1.9)], []),
+    ],
+)
+def test_unheard(final: Script, expected: list[str]) -> None:
+    previous = [live.TimedWord(*w) for w in speak("for the score", 1.0)]
+    assert [w.text for w in live.unheard(previous, [live.TimedWord(*w) for w in final])] == expected
+
+
 def test_pending_and_open_text() -> None:
     lt = transcriber(FakeWhisper(speak("dump to feather brush and then a long", 1.0)), tr.load_replacements("ultimate/indoor", teams()), period_s=1.0)
     lt.feed(ramp(2.0))
@@ -394,9 +467,38 @@ def test_other_sample_rates_are_resampled() -> None:
     assert groups[0].start == T0 + dt.timedelta(seconds=1.0)
 
 
-def test_invalid_settings() -> None:
+@pytest.mark.parametrize("window_s", [6.0, 7.0, 7.00001])  # 7.00001 leaves less than a sample to decode in steps
+def test_invalid_settings(window_s: float) -> None:
     with pytest.raises(ValueError, match="force_s"):
-        live.LiveTranscriber(T0, transcribe=FakeWhisper([]), window_s=6.0, force_s=4.0, period_s=3.0)
+        live.LiveTranscriber(T0, transcribe=FakeWhisper([]), window_s=window_s, force_s=4.0, period_s=3.0)
+
+
+def test_only_mono_audio_is_accepted() -> None:
+    lt = transcriber(FakeWhisper([]))
+    with pytest.raises(ValueError, match="mono"):
+        lt.feed(np.zeros((SR, 2), dtype=np.float32))  # would be read as 2 s of interleaved samples
+    lt.feed(np.zeros((SR, 1), dtype=np.float32))
+    lt.feed(np.zeros((1, SR), dtype=np.float32))
+    assert lt.audio_s == 2.0
+
+
+def test_word_times_are_naive_local_times() -> None:
+    """A start with a UTC offset becomes a naive local time, as yus-transcribe's recording start does (transcribe.local_naive)."""
+    start = dt.datetime(2025, 1, 15, 4, 30, 33, tzinfo=dt.timezone.utc)
+    lt = live.LiveTranscriber(start, transcribe=FakeWhisper(speak("pull", 1.0)))
+    run(lt, 6.0)
+    assert lt.transcript.words[0].start == tr.local_naive(start) + dt.timedelta(seconds=1.0)
+    assert lt.transcript.words[0].start.tzinfo is None and lt.horizon.tzinfo is None
+
+
+def test_a_nan_word_probability_gives_valid_json() -> None:
+    seg = segment(speak("black pulls", 0.5), 0.0, avg_logprob=float("nan"))
+    seg["words"][0]["probability"] = float("nan")
+    lt = transcriber(lambda audio, prompt: [seg] if float(audio[0]) == 0 else [])
+    run(lt, 3.0)
+    assert [w.confidence for w in lt.transcript.words] == [0.0, 0.9]
+    assert math.isfinite(lt.transcript.groups[0].interpretations[0].confidence)
+    assert "NaN" not in lt.transcript.model_dump_json()
 
 
 # Simulated live arrival ------------------------------------------------------------------------------------------------------------------
@@ -445,6 +547,16 @@ def test_real_time_simulation_gives_the_same_transcript() -> None:
     timings = live.simulate(lt, ramp(25.0), speed=1.0, clock=fake.clock, sleep=fake.sleep)
     assert group_texts(lt.transcript.groups) == UTTERANCES
     assert len(timings.word_latency) == len(PLAY) and min(timings.word_latency) >= 1.0
+    assert timings.busy == pytest.approx(0.5 * len(lt.passes) / 25.0)
+
+
+def test_busy_fraction_at_a_faster_speed() -> None:
+    """Played twice as fast, the audio lasts half as long, so the same decodes keep the GPU twice as busy."""
+    fake = SlowFake(PLAY, 0.5)
+    lt = transcriber(fake)
+    timings = live.simulate(lt, ramp(25.0), speed=2.0, clock=fake.clock, sleep=fake.sleep)
+    assert timings.busy == pytest.approx(0.5 * len(lt.passes) / 12.5)
+    assert "at 2x" in timings.summary()
 
 
 def test_live_prompt() -> None:
@@ -494,6 +606,41 @@ def test_mlx_decodes_only_the_first_window_of_a_call() -> None:
     assert skipped.no_speech_prob > 0.6 and skipped.avg_logprob < live.LOW_LOGPROB and not skipped.tokens  # transcribe() skips it as silence
 
 
+def test_mlx_decodes_from_several_threads_take_turns() -> None:
+    """mlx-whisper caches one model per repo; each MlxWhisper call patches its decode, so two transcribers in threads (two commentators)
+    must not interleave. A fake model and transcribe() stand in for mlx-whisper."""
+
+    class Model:
+        def decode(self, mel: str, options: object) -> str:
+            return f"decoded {mel}"
+
+    model = Model()
+    active: list[int] = []
+
+    def fake_transcribe(audio: np.ndarray, **kwargs: object) -> dict[str, list[live.Segment]]:
+        active.append(1)
+        assert len(active) == 1, "two decodes at once"
+        time.sleep(0.05)  # without the lock, the other thread patches (and later unpatches) the shared model meanwhile
+        assert isinstance(vars(model)["decode"], live.OneWindow)
+        text = model.decode("mel 0-30 s", None)
+        active.pop()
+        return {"segments": [{"text": text, "words": []}]}
+
+    whispers = []
+    for _ in range(2):
+        whisper = object.__new__(live.MlxWhisper)
+        whisper.repo, whisper.options, whisper._model, whisper._transcribe = "repo", {}, model, fake_transcribe  # type: ignore[assignment]
+        whispers.append(whisper)
+    results: list[object] = []
+    threads = [threading.Thread(target=lambda w=w: results.append(w(np.zeros(SR, dtype=np.float32), None))) for w in whispers for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results == [[{"text": "decoded mel 0-30 s", "words": []}]] * 4
+    assert "decode" not in vars(model)  # back to the class's decode
+
+
 def test_cli_defaults() -> None:
     args = live.build_arg_parser().parse_args(["game.ogg", "--team", "a.json", "--team", "b.json"])
     assert (args.speed, args.period, args.window, args.hold, args.force, args.model, args.mondegreens) == (0.0, 3.0, 20.0, 1.0, 4.0, "large-v3-turbo", True)
@@ -522,6 +669,21 @@ def test_wer_helper() -> None:
     assert wer(["a", "b", "c", "d"], ["a", "x", "c"]) == 0.5
 
 
+class FixedCost:
+    """Wraps a decoder so that every decode takes `cost` seconds on a fake clock: simulate() then decodes the same windows on every run
+    (on the real clock, where a window starts depends on how long earlier decodes took, which made WER vary by up to 0.09 here)."""
+
+    def __init__(self, decode: live.Transcribe, cost: float) -> None:
+        self.decode, self.cost, self.now = decode, cost, 0.0
+
+    def __call__(self, audio: np.ndarray, prompt: str | None) -> list[live.Segment]:
+        self.now += self.cost
+        return self.decode(audio, prompt)
+
+    def clock(self) -> float:
+        return self.now
+
+
 @pytest.mark.skipif(os.environ.get("YUS_SLOW_TESTS") != "1", reason="needs the Whisper model, a GPU and the game's audio: set YUS_SLOW_TESTS=1")
 def test_live_wer_on_real_audio() -> None:
     """The first 120 s of the 2025-01-14 20:30 game (audio t=0 is 20:30:33), live, against the hand-made transcript."""
@@ -529,13 +691,16 @@ def test_live_wer_on_real_audio() -> None:
     if not AUDIO.exists():
         pytest.skip(f"no audio at {AUDIO}")
     whisper = live.MlxWhisper("large-v3-turbo")
-    lt = live.LiveTranscriber(T0, live.live_prompt(teams(), whisper), tr.load_replacements("ultimate/indoor", teams()), transcribe=whisper)
-    timings = live.simulate(lt, live.load_audio(AUDIO)[: 120 * SR])
+    prompt = live.live_prompt(teams(), whisper)
+    whisper(np.zeros(SR, dtype=np.float32), prompt)  # compile the model's kernels, as yus-live-transcribe does
+    decoder = FixedCost(whisper, 1.5)  # about the median decode time on an M3 Pro
+    lt = live.LiveTranscriber(T0, prompt, tr.load_replacements("ultimate/indoor", teams()), transcribe=decoder)
+    timings = live.simulate(lt, live.load_audio(AUDIO)[: 120 * SR], clock=decoder.clock)
     cut = T0 + dt.timedelta(seconds=118)  # a word under way at 120 s may be cut off
     reference = yus.Transcript.model_validate_json((DATA / "gruindoor_20250114T2030-transcript.json").read_text())
     expected = [t for w in reference.words if w.start < cut for t in tokens(w.text)]
     heard = [t for w in lt.transcript.words if w.start < cut for t in tokens(w.text)]
-    # Six runs at these settings measured 0.19-0.28 on this span: it has only 101 reference words, and each run's windows start at slightly
-    # different times (docs/live_transcription.md, Limitations). Over the whole game: 0.12-0.14.
-    assert wer(expected, heard) < 0.3
-    assert live.quantile(timings.word_latency, 0.5) < 9.0  # measured 6.5-6.7 s over the whole game
+    # Deterministic: two runs gave the same transcript, WER 0.168 (101 reference words, so one error is 0.01). With every decode costing
+    # 1.0, 1.2, 1.8 or 2.0 s instead: 0.168-0.198. Over the whole game: 0.12-0.14.
+    assert wer(expected, heard) < 0.25
+    assert live.quantile(timings.word_latency, 0.5) < 8.0  # 6.8 s (6.3-7.3 s at 1.0-2.0 s per decode)
