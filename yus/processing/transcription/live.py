@@ -28,6 +28,7 @@ import yus
 from yus.processing.transcription import transcribe as tr
 
 SAMPLE_RATE = 16000  # Whisper's
+MAX_WINDOW_S = 30.0  # Whisper decodes 30-second windows; MlxWhisper decodes only the first of a call
 
 # A decode returns Whisper segments as dicts: "words" (each with "word", "start", "end", "probability"; seconds from the start of the decoded
 # audio), plus "text" and, optionally, the decode's "avg_logprob" and "compression_ratio".
@@ -65,6 +66,7 @@ class DecodePass(pydantic.BaseModel):
     compute: float = pydantic.Field(..., description="Seconds the decode took.")
     words: int = pydantic.Field(0, description="Words hypothesized after the commit point.")
     committed: int = pydantic.Field(0, description="Words committed by this pass.")
+    failed: bool = pydantic.Field(False, description="Heard no words where earlier decodes had (a dropped loop, or only noise), so ignored.")
 
 
 def _key(word: TimedWord) -> str:
@@ -164,17 +166,25 @@ def _agreed_prefix(a: Sequence[TimedWord], b: Sequence[TimedWord]) -> int:
 
 def after_commit_point(hypothesis: list[TimedWord], committed: Sequence[TimedWord]) -> list[TimedWord]:
     """The words of a decode that follow the last committed word. Word times drift between decodes, so the decode is first aligned on the
-    text of the committed words it repeats (the match ending nearest the commit point); without such a match, words whose middle is past the
+    text of the committed words it repeats (the match ending nearest the commit point, and nearer it than to an earlier committed copy of
+    the same words, so "flick to glasses, flick" does not align on the first "flick"); without such a match, words whose middle is past the
     commit point are new."""
     if not committed:
         return hypothesis
     commit_point = committed[-1].end
     keys = [_key(w) for w in hypothesis]
-    tail = [_key(w) for w in committed[-ALIGN_WORDS:]]
+    tail_words = committed[-ALIGN_WORDS:]
+    tail = [_key(w) for w in tail_words]
     for k in range(len(tail), 0, -1):
         tolerance = 1.0 if k == 1 else 2.0  # seconds a repeated word's end may drift
-        ends = [(abs(hypothesis[j + k - 1].end - commit_point), j + k) for j in range(len(keys) - k + 1) if keys[j : j + k] == tail[-k:]]
-        if matches := [m for m in ends if m[0] <= tolerance]:
+        copies = [tail_words[q].end for q in range(k - 1, len(tail) - 1) if tail[q - k + 1 : q + 1] == tail[-k:]]
+        matches = []
+        for j in range(len(keys) - k + 1):
+            if keys[j : j + k] == tail[-k:]:
+                end = hypothesis[j + k - 1].end
+                if (drift := abs(end - commit_point)) <= tolerance and all(drift <= abs(end - copy) for copy in copies):
+                    matches.append((drift, j + k))
+        if matches:
             return hypothesis[min(matches)[1] :]
     return [w for w in hypothesis if (w.start + w.end) / 2 > commit_point]
 
@@ -220,8 +230,11 @@ class LiveTranscriber:
         gap_s: float = 0.6,
     ) -> None:
         self._step = int((window_s - force_s - period_s) * SAMPLE_RATE)  # samples per decode when a backlog is decoded in steps
-        if not (0 < period_s and self._step >= 1):
-            raise ValueError(f"need 0 < period_s and force_s + period_s < window_s, got period_s={period_s}, force_s={force_s}, window_s={window_s}")
+        if not (0 < period_s and self._step >= 1 and window_s <= MAX_WINDOW_S):
+            raise ValueError(
+                f"need 0 < period_s, force_s + period_s < window_s and window_s <= {MAX_WINDOW_S:g} (one Whisper window), "
+                f"got period_s={period_s}, force_s={force_s}, window_s={window_s}"
+            )
         self.start = tr.local_naive(start)
         self.prompt = prompt or None
         self.replacements = replacements or {}
@@ -238,6 +251,7 @@ class LiveTranscriber:
         self._decoded = 0  # ...when the last decode ran
         self._open: list[TimedWord] = []  # committed words of the group not yet closed
         self._pending: list[TimedWord] = []  # the last decode's uncommitted words
+        self._ready: list[yus.TranscriptGroup] = []  # groups completed by a feed() that then raised, for the next call to return
         self._horizon = 0.0
         self._flushed = False
 
@@ -271,7 +285,8 @@ class LiveTranscriber:
     def feed(self, samples: np.ndarray) -> list[yus.TranscriptGroup]:
         """Add mono audio at `sample_rate` that just arrived; return the groups completed by it. Decodes when `period_s` of new audio has
         arrived, once per call however much arrived (a decoder that fell behind skips ahead), except that a backlog too long for one window
-        is decoded in steps so that no audio goes undecoded."""
+        is decoded in steps so that no audio goes undecoded. If a decode raises, the error propagates, but all of the audio is kept (word
+        times stay right) and the groups completed before it are returned by the next call."""
         if self._flushed:
             raise RuntimeError("feed() after flush(): the stream has ended")
         audio = np.asarray(samples, dtype=np.float32)
@@ -280,11 +295,16 @@ class LiveTranscriber:
         audio = audio.reshape(-1)
         if self._resampler:
             audio = self._resampler.resample(audio)
-        groups: list[yus.TranscriptGroup] = []
+        groups, self._ready = self._ready, []
         for i in range(0, len(audio), self._step):
             self._append(audio[i : i + self._step])
             if self._received - self._decoded >= self.period_s * SAMPLE_RATE:
-                groups += self._decode(final=False)
+                try:
+                    groups += self._decode(final=False)
+                except BaseException:  # a failed decode: keep the rest of the audio (or later word times would shift) and the groups so far
+                    self._append(audio[i + self._step :])
+                    self._ready = groups
+                    raise
         return groups
 
     def flush(self) -> list[yus.TranscriptGroup]:
@@ -294,10 +314,15 @@ class LiveTranscriber:
             return []
         if self._resampler:
             self._append(self._resampler.resample(None))
+        groups, self._ready = self._ready, []
         if self._received > self._decoded:
-            groups = self._decode(final=True)
+            try:
+                groups += self._decode(final=True)
+            except BaseException:  # flush() again commits what the last decode heard
+                self._ready = groups
+                raise
         else:
-            groups = self._commit(self._pending)
+            groups += self._commit(self._pending)
             self._pending = []
         if self._open:
             groups.append(self._close())
@@ -315,7 +340,14 @@ class LiveTranscriber:
         began = time.perf_counter()
         segments = self._transcribe(self._buffer, self.prompt) if len(self._buffer) else []
         compute = time.perf_counter() - began
-        new = after_commit_point(hypothesis_words(segments, now - len(self._buffer) / SAMPLE_RATE), self.committed)
+        window_start = now - len(self._buffer) / SAMPLE_RATE
+        heard = hypothesis_words(segments, window_start)
+        if not heard and not final and (self._pending or (self.committed and self.committed[-1].start >= window_start)):
+            # Nothing kept (a dropped loop, or only "!") where earlier decodes heard words: not evidence of silence. Keep the last
+            # hypothesis and the open group, and leave the horizon where it is.
+            self.passes.append(DecodePass(end=now, compute=compute, failed=True))
+            return []
+        new = after_commit_point(heard, self.committed)
         if final:  # commit everything, keeping what the previous decode heard and this one did not
             new = unheard(self._pending, new) + new
             n = len(new)

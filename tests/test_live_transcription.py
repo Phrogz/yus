@@ -129,6 +129,32 @@ def test_a_backlog_longer_than_the_window_is_decoded_in_steps() -> None:
     assert max(b[0] - a[1] for a, b in zip(fake.windows, fake.windows[1:])) <= 0  # every window overlaps the previous one
 
 
+def test_a_decode_that_raises_loses_no_audio_or_groups() -> None:
+    """The server logs a failed feed() and goes on with the same transcriber: the rest of that audio must still count, or every later word
+    time shifts early, and groups completed before the failure must still be returned."""
+    fake = FakeWhisper(speak("pull", 1.0) + speak("flick to kaia", 36.0))
+    calls: list[int] = []
+
+    def flaky(audio: np.ndarray, prompt: str | None) -> list[live.Segment]:
+        calls.append(len(audio))
+        if len(calls) == 2:
+            raise RuntimeError("GPU hiccup")
+        return fake(audio, prompt)
+
+    lt = transcriber(flaky)
+    with pytest.raises(RuntimeError, match="hiccup"):
+        lt.feed(ramp(30.0))  # a backlog: decoded at 13 s ("pull" committed and closed), then at 26 s, which fails
+    assert lt.audio_s == 30.0
+    assert group_texts(lt.feed(ramp(31.0)[30 * SR :])) == ["pull"]  # completed before the failure
+    groups = run_from(lt, 31.0, 45.0) + lt.flush()
+    assert word_times(groups) == pytest.approx(speak("flick to kaia", 36.0))
+
+
+def run_from(lt: live.LiveTranscriber, start: float, end: float, block_s: float = 0.5) -> list[yus.TranscriptGroup]:
+    audio = ramp(end)
+    return [g for pos in range(int(start * SR), len(audio), int(block_s * SR)) for g in lt.feed(audio[pos : pos + int(block_s * SR)])]
+
+
 def test_horizon_is_where_every_earlier_word_has_been_returned() -> None:
     """EventExtractor.advance() needs the time up to which the transcript is complete: no word returned later starts before it."""
     lt = transcriber(FakeWhisper(PLAY))
@@ -234,6 +260,15 @@ def test_a_re_decoded_word_with_different_spelling_is_not_committed_again() -> N
         (speak("to kaia", 1.0), speak("to kaia to pikachu", 1.6), ["to", "pikachu"]),  # ...even after drift
         (speak("dump to kaia", 1.0), [("kaya", 1.6, 1.9), ("flick", 2.0, 2.3)], ["flick"]),  # respelled: by time
         ([], speak("flick", 1.0), ["flick"]),
+        # At 406 s in the game: "flick to glasses" and "Flick" were committed; a decode that heard only the first "flick" aligned on it
+        # (its end within 1 s of the commit point) and committed "to glasses" again. Its end is nearer the first copy: aligned by time.
+        (
+            [("flick", 6.33, 6.63), ("to", 6.63, 6.77), ("glasses.", 6.77, 7.13), ("Flick.", 7.13, 7.15)],
+            [("Flick", 6.01, 6.65), ("to", 6.65, 6.75), ("glasses.", 6.75, 7.19), ("Dump", 11.07, 11.95), ("to", 11.95, 12.05)],
+            ["Dump", "to"],
+        ),
+        (speak("flick to joe", 1.0) + [("flick", 4.0, 4.3)], [("flick", 4.2, 4.5), ("huck", 4.5, 4.8)], ["huck"]),  # nearer the last copy
+        (speak("backhand to joe backhand to joe", 1.0), speak("backhand to joe backhand to joe huck", 0.5), ["huck"]),  # both copies heard
     ],
 )
 def test_after_commit_point(committed: Script, hypothesis: Script, expected: list[str]) -> None:
@@ -342,6 +377,41 @@ def test_hallucinated_segments_are_dropped() -> None:
     lt = transcriber(Noisy(speak("black pulls", 8.0), noise))
     run(lt, 15.0)
     assert [w.text for w in lt.transcript.words] == ["black", "pulls"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        [{**segment(speak("hammer " * 30, 0.0, 0.1)), "compression_ratio": 37.0}],  # a loop, dropped by the compression check
+        [segment([("!", 0.0, 9.0)])],  # mlx-whisper's "!" for the whole window
+        [],
+    ],
+)
+def test_a_decode_that_keeps_no_words_changes_nothing(failure: list[live.Segment]) -> None:
+    """In the game, 39 of 315 decodes kept no words. One of them used to empty the pending hypothesis, close the open group mid-phrase
+    ("clicks ring to gloves" | "gloves hammer to the end zone") and let horizon pass words heard before it. Now it is ignored."""
+    fake = FakeWhisper(speak("clicks ring to gloves gloves hammer to the end zone", 1.0, 0.5))  # 1-6 s
+
+    def failing(audio: np.ndarray, prompt: str | None) -> list[live.Segment]:
+        segments = fake(audio, prompt)
+        return failure if len(fake.windows) == 3 else segments  # the decode at 9 s fails
+
+    lt = transcriber(failing)
+    fed = run_from(lt, 0.0, 8.5)
+    assert (lt.open_text, lt.pending_text) == ("clicks ring to gloves", "gloves hammer to the end zone")
+    horizon = lt.horizon
+    fed += lt.feed(ramp(9.0)[int(8.5 * SR) :])
+    assert lt.passes[-1].failed and (lt.open_text, lt.pending_text, lt.horizon) == ("clicks ring to gloves", "gloves hammer to the end zone", horizon)
+    fed += run_from(lt, 9.0, 15.0)
+    assert group_texts(fed + lt.flush()) == ["clicks ring to gloves gloves hammer to the end zone"]
+    assert [p.end for p in lt.passes if p.failed] == [9.0]
+
+
+def test_a_decode_that_keeps_no_words_in_silence_moves_on() -> None:
+    """With no words pending or in its window, a decode that keeps nothing is silence: it is not ignored, and horizon moves."""
+    lt = transcriber(lambda audio, prompt: [segment([("!", 0.0, 9.0)])] if len(audio) > 4 * SR else [])
+    run_from(lt, 0.0, 30.0)
+    assert not any(p.failed for p in lt.passes) and lt.horizon == T0 + dt.timedelta(seconds=30.0 + lt.period_s - lt.window_s)
 
 
 # Groups ----------------------------------------------------------------------------------------------------------------------------------
@@ -471,6 +541,13 @@ def test_other_sample_rates_are_resampled() -> None:
 def test_invalid_settings(window_s: float) -> None:
     with pytest.raises(ValueError, match="force_s"):
         live.LiveTranscriber(T0, transcribe=FakeWhisper([]), window_s=window_s, force_s=4.0, period_s=3.0)
+
+
+def test_the_window_fits_one_whisper_window() -> None:
+    """MlxWhisper decodes only the first 30 s of a call: with a 40 s window the newest 10 s would never be decoded."""
+    with pytest.raises(ValueError, match="30"):
+        live.LiveTranscriber(T0, transcribe=FakeWhisper([]), window_s=30.5)
+    live.LiveTranscriber(T0, transcribe=FakeWhisper([]), window_s=30.0)
 
 
 def test_only_mono_audio_is_accepted() -> None:
