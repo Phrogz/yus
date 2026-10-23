@@ -38,6 +38,9 @@ yus-game = "yus.game_cli:main"
 [tool.uv]
 package = true
 
+[tool.setuptools.packages.find]
+include = ["yus*"]  # not games/ or other folders yus-serve and yus-game write into the checkout
+
 [tool.setuptools.package-data]
 "yus.web" = ["static/*"]  # the server's pages and scripts, also in a non-editable install
 
