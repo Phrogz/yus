@@ -6,14 +6,16 @@ The labeled game is a draft: tests/data/subbing_20250128T2050-draft-eventstream.
 
 import datetime as dt
 import pathlib
+import random
 import time
 
 import pytest
 
 import yus
 from tests.data.gruindoor_20250114T2030 import build_game
+from tests.test_event_extraction import NAMES, PHRASES, stream
 from yus.processing.evaluation import score
-from yus.processing.event_extraction import EventExtractor, extract_events
+from yus.processing.event_extraction import Association, EventExtractor, extract_events
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
 from yus.processing.stats import GameStats, compute_stats
 from yus.sports import ultimate
@@ -87,6 +89,8 @@ def plays(extractor: EventExtractor) -> list[tuple]:
         (["Red shorts off for dark, kaia is on."], [("dark", "red shorts", "off"), ("white", "kaia", "on")]),
         (["26 off, 25 on.", "5 off."], [("", "26", "off"), ("", "25", "on"), ("", "5", "off")]),  # jersey numbers
         (["Kyle", "Fulmer on"], [("", "kyle", "on"), ("", "fulmer", "on")]),  # a name ending a group starts the next one's list
+        (["Kaia comes in, Tristan goes off."], [("white", "kaia", "on"), ("white", "tristan", "off")]),  # words that also describe play
+        (["Joe comes in for Kaia.", "Emily heads off"], [("white", "joe", "on"), ("white", "kaia", "off"), ("white", "emily", "off")]),
     ],
 )
 def test_substitution_phrasings(teams: list[yus.Team], texts: list[str], expected: list):
@@ -109,6 +113,9 @@ def test_substitutions_between_throws(teams: list[yus.Team]):
         "Flick to Tristan. D-line comes on for dark.",
         "Flick to Tristan, off the wall, dropped.",
         "Flick to the Kid, he's on fire.",
+        "Kaia coming in, flick to Kaia.",  # "coming in", "goes off" substitute only when the sentence, or another substitution, follows
+        "Flick huck, Joe comes in, catches it.",
+        "Flick to Tristan, it goes off the wall.",
     ],
 )
 def test_on_and_off_that_substitute_nobody(teams: list[yus.Team], text: str):
@@ -118,6 +125,31 @@ def test_on_and_off_that_substitute_nobody(teams: list[yus.Team], text: str):
 def test_a_team_said_across_groups_is_still_a_teams(teams: list[yus.Team]):
     extractor = extract("picked up by blue on", "dark. Flick to kaia.", teams=teams)  # "on" after a pickup: "on dark"
     assert plays(extractor) == [("dark", "blue", "kaia")] and subs(extractor) == []
+    lineup = extract("picked up by kaia for white", "Flick to tristan, dropped... on", "dark we have Sebastian and Cynic.", teams=teams)
+    assert lineup.team_of("cynic") == 1  # an "on" that substitutes nobody waits for its team
+
+
+def test_an_identification_split_before_its_team_is_read_as_one(teams: list[yus.Team]):
+    start = ["picked up by kaia for white", "flick to tristan."]
+    split = extract(*start, "Red shorts is Kaia on", "white. Red shorts picks it up.", teams=teams)
+    whole = extract(*start, "Red shorts is Kaia on white. Red shorts picks it up.", teams=teams)
+    assert split.associations == whole.associations == [Association("white", "red shorts", "kaia")]
+    assert (plays(split), subs(split)) == (plays(whole), subs(whole)) and subs(split) == []
+    assert subs(extract("Dark picks it up, flick to Blue.", "Blue is Sebastian on", "dark. Blue throws it away.", teams=teams)) == []
+    assert subs(extract(*start, "Red shorts is Kaia on", "Flick to joe.", teams=teams)) == [("white", "kaia", "on")]  # no team next: as said
+    assert subs(extract("Dylan off.", "Kaia is on", teams=teams)) == [("", "dylan", "off"), ("white", "kaia", "on")]  # nothing next
+    paused = EventExtractor(teams, timeout=2.0)
+    for k, text in enumerate(["Kaia is on", "Dark picks it up."]):
+        paused.feed(group(text, NOW + dt.timedelta(seconds=5 * k)))
+    assert subs(paused) == [("white", "kaia", "on")] and paused.final_count == 1  # a pause: no team is coming
+
+
+def test_a_score_line_keeps_its_numbers(teams: list[yus.Team]):
+    """Numbers above 20 are jersey numbers ("flick to 26"), except in a score line."""
+    for line in ("21 to 19.", "21-19.", "19 to 21.", "21 to nothing."):
+        extractor = extract("picked up by kaia for white", f"Flick to tristan. {line}", "Flick to joe.", teams=teams)
+        assert plays(extractor) == [("white", "kaia", "tristan"), ("white", "tristan", "joe")], line
+    assert plays(extract("picked up by kaia for white", "Flick to 26. 26 to 50.", teams=teams)) == [("white", "kaia", "26"), ("white", "26", "50")]
 
 
 def test_teams_from_what_was_said_swaps_and_earlier_substitutions(teams: list[yus.Team]):
@@ -144,6 +176,58 @@ def test_a_correction_takes_back_the_last_substitution(teams: list[yus.Team]):
     assert subs(extract("Kaia off, er, Tristan on.", teams=teams)) == [("white", "kaia", "off"), ("white", "tristan", "on")]  # a hesitation
     assert subs(extract("Kaia off, sorry, Emily off.", teams=teams)) == [("white", "emily", "off")]
     assert subs(extract("Kaia off. Sorry, that was a great throw.", teams=teams)) == [("white", "kaia", "off")]
+
+
+@pytest.mark.parametrize(
+    "texts, expected",
+    [
+        (["Dylan off.", "Kaia on.", "Tristan on, wait, Pikachu."], [("white", "dylan", "off"), ("white", "kaia", "on"), ("white", "pikachu", "on")]),
+        (["Dylan off.", "Nope. Kaia on.", "Tristan on, wait, Pikachu."], [("white", "kaia", "on"), ("white", "pikachu", "on")]),
+        (["Picked up by kaia for white.", "Flick huck, caught by Joe, Tristan off.", "Sorry, Emily."], [("white", "emily", "off")]),
+    ],
+)
+def test_a_correction_parsing_again_keeps_what_was_decided(teams: list[yus.Team], texts: list[str], expected: list):
+    """A correction of a finished event parses the group before again: dylan's swap with kaia, the "nope" that took dylan back, and
+    a correction of a substitution said while a throw was open are all made again; final events never change."""
+    extractor = EventExtractor(teams)
+    stream(extractor, [group(text, NOW + dt.timedelta(seconds=5 * k)) for k, text in enumerate(texts)])
+    assert subs(extractor) == expected
+
+
+SUB_PHRASES = [
+    "{n} off", "{n} on", "{n} subs off", "{n} subs on", "{n} off, {n} on", "{n}, {n} off", "{n} on for {n}", "{n} off for {t}",
+    "subbing on: {n} and {n}", "{n} comes on", "{n} is on", "nope", "sorry, {n} on", "26 off", "25 on", "{n} off {n} off {n} on",
+    "on {t} we have {n}, {n} and {n}", "{n} coming in", "{n} back on", "{n} heads off", "{n} off, er, {n} on", "starting with {n} and {n}",
+]  # fmt: skip
+
+
+def random_commentary(rng: random.Random) -> list[yus.TranscriptGroup]:
+    """test_event_extraction's random commentary, with substitutions."""
+    phrases, names, words = PHRASES + SUB_PHRASES * 2, [*NAMES, "26", "dylan", "fulmer"], []
+    for _ in range(rng.randint(5, 40)):
+        text = rng.choice(phrases)
+        while "{" in text:
+            text = text.replace("{n}", rng.choice(names), 1).replace("{t}", rng.choice(["white", "dark", "black", "Category 5"]), 1)
+        words += [w.capitalize() if rng.random() < 0.2 else w for w in text.split()]
+        words[-1] += rng.choice(["", "", ".", ",", "?", "!", "..."])
+    groups, clock = [], NOW
+    while words:
+        size = rng.randint(1, 8)
+        groups.append(group(" ".join(words[:size]), clock, step=rng.choice([0.4, 0.4, 0.0])))
+        clock += dt.timedelta(seconds=0.4 * size + rng.choice([0.2, 1.0, 2.5, 4.0, 8.0]))
+        words = words[size:]
+    return groups
+
+
+@pytest.mark.parametrize("seed", [*range(40), 259, 6025])  # 259, 6025: a correction parsing again lost a swap's team, a "nope"
+def test_random_commentary_with_substitutions_streams_like_batch(seed: int):
+    teams = build_game().teams
+    rng = random.Random(seed)
+    groups = random_commentary(rng)
+    timeout, lineups = rng.choice([None, 0.0, 2.0, 6.0]), rng.random() < 0.5
+    batch = extract_events(yus.Transcript(groups=groups), teams, timeout=timeout, lineups=lineups).events
+    assert stream(EventExtractor(teams, timeout=timeout, lineups=lineups), groups, rng) == batch
+    compute_stats(yus.EventStream(events=batch), teams)
 
 
 def test_substitutions_said_during_a_throw_follow_it(teams: list[yus.Team]):
@@ -231,8 +315,9 @@ def test_on_field_from_a_line_up_and_swaps():
         events=[
             *line("white", "a b c d e", 0),
             throw("white", "a", "b", 10, scored=True),  # point 1: white scores with a-e
+            throw("black", "x", "y", 15),
             sub("white", "e", OFF, 20),
-            sub("white", "f", ON, 21),  # one swap, made at 20
+            sub("white", "f", ON, 21),  # one swap, made at 20, during point 2
             throw("black", "x", "y", 30, scored=True),  # point 2: black scores against a-d, f
             throw("white", "f", "a", 40),
         ]
@@ -255,6 +340,7 @@ def test_unknown_on_field_state_is_not_guessed():
         sub("white", "a", ON, 0),
         sub("white", "b", OFF, 0),  # b was on before: unknown since the start
         throw("white", "a", "c", 10, scored=True),  # c was never substituted: no row; a is on, b off
+        throw("black", "x", "y", 15),
         sub("white", "a", ON, 20),  # a second "a on": "a off" was missed after a's throw at 10, so 10-20 is unknown
         throw("black", "x", "y", 30, scored=True),
     ]
@@ -312,7 +398,7 @@ def test_recomputing_with_substitutions_stays_fast(teams: list[yus.Team], resolv
     started = time.perf_counter()
     for _ in range(5):
         compute_stats(stream, teams)
-    assert (time.perf_counter() - started) / 5 < 0.1  # measured: 11 ms (the bundled game, without substitutions: 9 ms)
+    assert (time.perf_counter() - started) / 5 < 0.1  # measured: 10 ms (the bundled game, without substitutions: 7 ms)
 
 
 def test_yus_stats_writes_the_on_field_tables_when_there_are_substitutions(teams: list[yus.Team], tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]):

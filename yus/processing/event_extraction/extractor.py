@@ -23,7 +23,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, NamedTuple
 
 import yus
-from yus.processing.event_extraction.lexicon import Item, Tag, Tagger, Token, pieces, tokenize
+from yus.processing.event_extraction.lexicon import LOOSE_SUBS, Item, Tag, Tagger, Token, pieces, tokenize
 from yus.processing.event_unification.players import normalize, roster_aliases
 from yus.sports import ultimate
 from yus.sports.ultimate import SubType, ThrowDirection, ThrowType, indoor
@@ -165,6 +165,7 @@ class EventExtractor:
         self._pending: _Throw | None = None
         self._carry: Item | None = None  # a name ending the last group, maybe the subject of the next ("Tristan" | "picks up")
         self._held: list[Token] = []  # a team reference cut by the end of the last group ("picks it up for" | "White.")
+        self._held_clause = 0  # how many of `_held` are the identification it may end ("red shorts is joe on" | "dark.")
         self._held_subject: str | None = None
         self._last_end: dt.datetime | None = None
         self._stated = False  # possession was said, not inferred, since the last throw ended
@@ -244,13 +245,19 @@ class EventExtractor:
         words = group.words
         self.advance(words[0].start)
         self._start = self._snapshot()
-        items = self._tagger.tag(self._held + tokenize(words))
+        tokens = tokenize(words)
+        held = self._held
+        if self._held_clause and not self._completes(tokens):  # "kaia is on" | "flick to joe": a substitution after all
+            held = [*held[:-1], dataclasses.replace(held[-1], boundary="weak")]
+        tokens = held + tokens
+        items = self._tagger.tag(tokens)
         subject = self._held_subject if self._held and items and items[0].tag is Tag.TEAMREF else None  # "... picks it up for" | "white"
-        self._held, self._held_subject = [], None
-        held = _dangling_team_prefix(items)
-        if held:
-            self._held = [Token(item.text, item.start, item.end) for item in items[-held:]]
-            items = items[:-held]
+        self._held, self._held_subject, self._held_clause = [], None, 0
+        hold, clause = _dangling_team_prefix(items)
+        if hold:
+            self._held = tokens[len(tokens) - _token_count(items[-hold:]) :]
+            self._held_clause = _token_count(items[len(items) - hold : len(items) - hold + clause])
+            items = items[:-hold]
         if self._carry is not None:
             carry, self._carry = self._carry, None
             items = [carry, Item(Tag.BOUNDARY, False, ",", carry.end, carry.end), *items]
@@ -276,17 +283,31 @@ class EventExtractor:
         seconds without words, the provisional events become final as they stand."""
         if self.timeout is None or self._last_end is None or (now - self._last_end).total_seconds() <= self.timeout:
             return
-        self._carry, self._held, self._held_subject = None, [], None
+        self._release()
         if self._pending is not None:
             self._finish_throw(self._pending)
         self._commit()
 
     def finish(self) -> None:
         """End of the transcript: make every event final."""
-        self._carry, self._held, self._held_subject = None, [], None
+        self._release()
         if self._pending is not None:
             self._finish_throw(self._pending)
         self._commit()
+
+    def _release(self) -> None:
+        """No next group will finish what the last one left open: drop it (a name, the start of a team reference), except that an
+        identification held with a team reference is parsed as said ("kaia is on": a substitution)."""
+        held, clause = self._held, self._held_clause
+        self._carry, self._held, self._held_subject, self._held_clause = None, [], None, 0
+        if clause:
+            tokens = [*held[:-1], dataclasses.replace(held[-1], boundary="weak")]
+            self._parse(_Group(self._preprocess(self._tagger.tag(tokens))))
+
+    def _completes(self, tokens: list[Token]) -> bool:
+        """Do `tokens`, the next group's, finish the team reference held from the last group ("on" | "dark")?"""
+        found = self._tagger.tag([*self._held[self._held_clause :], *tokens[: self._tagger.longest_phrase]])
+        return bool(found) and found[0].tag is Tag.TEAMREF
 
     def team_of(self, name: str | None) -> int | None:
         """Index of the team `name` plays for, from what the commentator said, else the rosters, else the team it was last
@@ -467,8 +488,20 @@ class EventExtractor:
         self._done.append(throw)
         if self._pending is throw:
             self._pending = None
-            self._done += self._subs_after  # said while it was open: they follow it
+            for sub in self._subs_after:  # said while it was open: they follow it
+                if self._finished(sub):
+                    self._note_teams(sub.team, sub.player)
+                    self._seen.add(normalize(sub.player))
             self._subs_after = []
+
+    def _finished(self, record: _Defense | _Sub) -> bool:
+        """Add a finished defense or substitution to this group's events, with the correction already decided for it, if any (see
+        `_retract`). True if there was one."""
+        changes = self._late.get((record.when, self._position()))
+        if changes:
+            _change(record, changes)
+        self._done.append(record)
+        return bool(changes)
 
     def _start_throw(self, when: dt.datetime, thrower: str | None = None, named: bool = False) -> _Throw:
         previous = self._pending
@@ -582,7 +615,8 @@ class EventExtractor:
         """The clause with each substitution word and the names it goes with made one SUBST item: "pikachu subs off, blondie on",
         "close crop, emily off", "tanner off purple off", "fulmer on for cynic", "kaia off for white", "subbing on: ari and ben".
         A name right after "to", "caught by" or "picked up by" is that event's ("to 50, tristan off"). Substitution words that go
-        with no name, or are followed by more of the sentence ("blue yellow on the end zone"), are filler."""
+        with no name, or are followed by more of the sentence ("blue yellow on the end zone"), are filler; so are those that also
+        describe play, unless "for X", the end of the sentence or another substitution follows ("joe comes in, catches it")."""
         result: list[Item] = []
         k = 0
         while k < len(clause):
@@ -613,7 +647,7 @@ class EventExtractor:
             team, n = clause[n].value, n + 1
         elif kind is SubType.SUB_ON and n + 1 < len(clause) and clause[n].text == "for" and _player(clause[n + 1]):  # "fulmer on for cynic"
             replaced, n = clause[n + 1], n + 2
-        if not _sub_ends(clause, n):
+        if not _sub_ends(clause, n) or (word.text in LOOSE_SUBS and replaced is None and not _sub_closes(clause, n)):
             return None
         end = len(result) - (1 if result and result[-1].tag is Tag.IS and result[-1].text == "is" else 0)  # "kaia is on"
         first = _names_before(result, end)
@@ -995,10 +1029,7 @@ class EventExtractor:
             if self._pending is not None:
                 self._subs_after.append(record)
             else:
-                changes = self._late.get((record.when, self._position()))
-                if changes:
-                    _change(record, changes)
-                self._done.append(record)
+                self._finished(record)
             self._learn(spec.name, spec.team)
             self._note_teams(team, record.player)
             self._seen.add(normalize(record.player))
@@ -1020,7 +1051,7 @@ class EventExtractor:
             return self._pending
         if self._done:
             return self._done[-1]
-        return self._unsettled[-1] if self._unsettled and self._window is not None else None
+        return self._unsettled[-1] if self._unsettled else None  # also while parsing again, so that swaps and "nope" are redone
 
     def _drop(self, record: _Sub) -> None:
         for records in (self._subs_after, self._done, self._unsettled):
@@ -1084,10 +1115,7 @@ class EventExtractor:
                 throw.team = thrower_team
         team = next((t for t in (explicit, self._other(thrower_team), defender) if isinstance(t, int)), None)
         defense = _Defense(item.start, team, name, item.tag is Tag.INTERCEPT)
-        changes = self._late.get((defense.when, self._position()))
-        if changes:
-            _change(defense, changes)
-        self._done.append(defense)
+        self._finished(defense)
         if defense.player:
             self._seen.add(normalize(defense.player))
         self.possession, self.holder, self._stated, self._passed = team, defense.player if defense.intercepted else None, isinstance(explicit, int), False
@@ -1224,6 +1252,13 @@ def _sub_ends(clause: list[Item], n: int) -> bool:
     return k > n and k < len(clause) and clause[k].tag is Tag.SUB
 
 
+def _sub_closes(clause: list[Item], n: int) -> bool:
+    """After a substitution word, does clause[n:] end the sentence, or say another substitution ("kaia comes in, tristan off")?"""
+    if n >= len(clause) or (clause[n].tag is Tag.BOUNDARY and clause[n].value):
+        return True
+    return any(clause[m].tag is Tag.SUB and (_sub_ends(clause, m + 1) or clause[m + 1].tag is Tag.TEAMREF) for m in range(n, len(clause)))
+
+
 def _trailing_subs(events: list[yus.Event]) -> tuple[list[yus.Event], list[ultimate.Substitution]]:
     """`events` without the substitutions at their end, and those substitutions."""
     k = len(events)
@@ -1238,7 +1273,7 @@ def _to_self(throw: _Throw, old: str, new: str) -> bool:
     return bool(player and receiver and normalize(player) == normalize(receiver))
 
 
-def _change(record: _Throw | _Defense, changes: dict[str, object]) -> None:
+def _change(record: _Throw | _Defense | _Sub, changes: dict[str, object]) -> None:
     """Apply a correction to an event being parsed."""
     for field, value in changes.items():
         if field == "rename":
@@ -1264,16 +1299,34 @@ def _outcome(event: yus.Event | None) -> tuple:
     return (type(event).__name__,)
 
 
-def _dangling_team_prefix(items: list[Item]) -> int:
-    """How many items at the end are the start of a team reference that the next group may finish: "for", "on the". An "on" only
-    right after a pickup or a defense ("picked up by blue on" | "dark"): "fulmer on" is a substitution."""
+def _dangling_team_prefix(items: list[Item]) -> tuple[int, int]:
+    """(n, k): the last n items are the start of a team reference that the next group may finish ("for", "on the"), the first k of
+    them an identification it would end. An "on" only right after a pickup or a defense ("picked up by blue on" | "dark"), after an
+    identification (with it when it stands alone, as `_associate` reads it: "red shorts is joe on", "red shorts is on" | "dark";
+    not after a substitution: "dylan off kaia is on"), or with no name right before it to substitute ("... on" | "dark we have"):
+    "fulmer on" is a substitution."""
     texts = tuple(item.text if item.tag in (Tag.FILLER, Tag.SUB) else "" for item in items[-2:])
     held = 1 if texts[-1:] in (("for",), ("on",)) else 2 if texts in (("for", "the"), ("on", "the")) else 0
-    if held and items[-held].tag is Tag.SUB:
-        before = [item.tag for item in items[: len(items) - held] if item.tag is not Tag.FILLER][-2:]
-        if not (before[-1:] and before[-1] in TIED_TO) and not (before[-1:] == [Tag.NAME] and before[:1] and before[0] in TIED_TO):
-            return 0
-    return held
+    if not held or items[-held].tag is not Tag.SUB:
+        return held, 0
+    before = [item.tag for item in items[: len(items) - held] if item.tag is not Tag.FILLER][-2:]
+    if (before[-1:] and before[-1] in TIED_TO) or (before[-1:] == [Tag.NAME] and before[:1] and before[0] in TIED_TO):
+        return held, 0
+    tags = [item.tag for item in items[: len(items) - held]]
+    for clause in ([Tag.NAME, Tag.IS, Tag.NAME], [Tag.NAME, Tag.IS]):
+        if tags[-len(clause) :] == clause:
+            part = tags[: len(tags) - len(clause)]
+            part = part[len(part) - next((k for k, tag in enumerate(reversed(part)) if tag is Tag.BOUNDARY), len(part)) :]
+            if all(tag in (Tag.FILLER, Tag.CORRECT) for tag in part):
+                return held + len(clause), len(clause)
+            return (0, 0) if Tag.SUB in part else (held, 0)
+    previous = items[len(items) - held - 1] if len(items) > held else None
+    return (held, 0) if previous is None or not (_player(previous) or (previous.tag is Tag.IS and previous.text == "is")) else (0, 0)
+
+
+def _token_count(items: list[Item]) -> int:
+    """How many tokens the tagger made `items` from."""
+    return sum(len(item.text.split()) for item in items if item.tag is not Tag.BOUNDARY)
 
 
 def extract_events(

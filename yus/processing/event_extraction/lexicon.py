@@ -7,8 +7,10 @@ also with a possessive ("adam federbusch's huck"). Common words that are not nam
 fillers.
 Punctuation from the ASR splits names and marks clause boundaries: "." "?" "!" and ";" end a sentence, "," and ":" are weak.
 Substitution words ("subs off", a bare "on" or "off") are tagged SUB wherever they are said; the extractor decides from what is
-around them whether they substitute anyone ("pikachu off, blondie on") or are filler ("blue yellow on the end zone").
-Numbers written as digits above 20 are jersey numbers, so names ("flick to 26"); smaller ones are scores.
+around them whether they substitute anyone ("pikachu off, blondie on") or are filler ("blue yellow on the end zone"). Those that
+also describe play (LOOSE_SUBS: "comes in", "goes off") need more: see the extractor.
+Numbers written as digits above 20 are jersey numbers, so names ("flick to 26"), except in a score line ("21 to 19", "21-19");
+smaller ones are scores.
 """
 
 from __future__ import annotations
@@ -79,6 +81,12 @@ class Item:
     end: dt.datetime
 
 
+LOOSE_ON = "comes on|coming on|comes back on|comes in|coming in"
+LOOSE_OFF = "comes off|coming off|goes off|going off|heads off"
+LOOSE_SUBS = frozenset(" ".join(phrase.split()) for phrase in f"{LOOSE_ON}|{LOOSE_OFF}".split("|"))
+"""Substitution words that also describe play ("joe comes in, catches it")."""
+
+
 def _phrases() -> list[tuple[Tag, str, object]]:
     table: list[tuple[Tag, str, object]] = []
 
@@ -128,8 +136,10 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.LINEUP, "we have|we've got|we got|on the line|line up|lineup|here's the line")
     add(Tag.LINEUP, "d line|o line|d lines|o lines|the d line|the o line|with the d line|on the d line|on d line|on o line|on the o line")  # not "the d"
     add(Tag.LINEUP, "starts with|starting with|start with|starting line|starting lineup|on the field|on the floor")
-    add(Tag.SUB, "on|back on|subs on|sub on|subbing on|subbed on|subs in|sub in|subbing in|subbed in|comes on|coming on|comes back on|comes in|coming in", SubType.SUB_ON)
-    add(Tag.SUB, "off|subs off|sub off|subbing off|subbed off|subs out|sub out|subbing out|subbed out|comes off|coming off|goes off|going off|heads off", SubType.SUB_OFF)
+    add(Tag.SUB, "on|back on|subs on|sub on|subbing on|subbed on|subs in|sub in|subbing in|subbed in", SubType.SUB_ON)
+    add(Tag.SUB, "off|subs off|sub off|subbing off|subbed off|subs out|sub out|subbing out|subbed out", SubType.SUB_OFF)
+    add(Tag.SUB, LOOSE_ON, SubType.SUB_ON)
+    add(Tag.SUB, LOOSE_OFF, SubType.SUB_OFF)
     add(Tag.CORRECT, "sorry|i mean|no wait|wait no|correction|or rather|my bad|my mistake|scratch that|nope|no|actually|er|wait|oops|whoops")
     add(Tag.IS, "is|is actually|is really|is named|is called|name is")
     add(Tag.UNK, "somebody|someone|some one|some body|i dunno|i don't know|dunno|don't know|unknown|who knows|not sure|nobody")
@@ -262,10 +272,23 @@ class Tagger:
         if word in ("number", "numero") and limit > 1 and (texts[1].isdigit() or self.phrases.get(texts[1:2], (None,))[0] is Tag.NUM):
             return 2, Tag.NAME, " ".join(texts[:2])  # a jersey number: "number twelve"
         if word.isdigit():
-            return (1, Tag.NAME, word) if int(word) > MAX_SCORE else (1, Tag.NUM, int(word))
+            return (1, Tag.NAME, word) if int(word) > MAX_SCORE and not self._score_line(tokens, i) else (1, Tag.NUM, int(word))
         if word in STOPWORDS:
             return 1, Tag.FILLER, None
         return 0, Tag.NAME, None
+
+    def _score_line(self, tokens: list[Token], i: int) -> bool:
+        """Is the number at tokens[i] one side of a score line whose other side is a score: "21 to 19", "21 to five", "21-19"?"""
+
+        def said(first: int, last: int) -> bool:  # tokens[first:last + 1] without a boundary, "to" between, a score at the far end
+            if first < 0 or last >= len(tokens) or any(tokens[k].boundary for k in range(first, last)):
+                return False
+            far = tokens[first if first < i else last].text
+            if last - first == 1:
+                return far.isdigit() and int(far) <= MAX_SCORE  # "21-19"
+            return tokens[first + 1].text == "to" and ((far.isdigit() and int(far) <= MAX_SCORE) or self.phrases.get((far,), (None,))[0] is Tag.NUM)
+
+        return said(i, i + 1) or said(i, i + 2) or said(i - 1, i) or said(i - 2, i)
 
 
 def _team_variants(key: tuple[str, ...]) -> list[tuple[str, ...]]:

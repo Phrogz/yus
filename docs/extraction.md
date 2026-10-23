@@ -189,14 +189,23 @@ Substitutions are `ultimate.Substitution` events: team, player as spoken, `sub_t
   "kaia off for white" (the team said), and "subbing on: ari and ben".
   - The word must end the phrase: a boundary, the clause's end, "and", a correction, or the next substitution. "blue yellow on the
     end zone for a score", "D-line comes on for dark" and "off the wall" substitute nobody.
+  - Words that also describe play ("comes in", "coming in", "comes on", "comes off", "goes off", "heads off": `lexicon.LOOSE_SUBS`)
+    need more: "for X", the end of the sentence, or another substitution in it. "Kaia comes in, Tristan goes off" and "Joe comes in
+    for Kaia" substitute; "Kaia coming in, flick to Kaia" and "Joe comes in, catches it" do not.
   - A name right after "to", "caught by", "picked up by" or a throw word is that event's: "backhand swing to 50, Tristan off" and
     "Backhand swing close crop, Pikachu off" sub off only Tristan and Pikachu.
-  - Jersey numbers: digits above 20 are names everywhere ("flick to 26", "26 off"); a smaller number only right before the
+  - Jersey numbers: digits above 20 are names ("flick to 26", "26 off"), except in a score line whose other side is a score ("21 to
+    19", "21-19", "19 to 21", "21 to nothing"; "26 to 50" is a throw); a smaller number is a name only right before the
     substitution word ("5 off"). "Five to three" is still a score line.
   - A name ending a group can start the next group's list ("Kyle" | "Fulmer on").
   - "intended for cynic" is "to cynic" (a throw).
-  - An "on" ending a group is kept for the next group's team name ("picked up by blue on" | "dark") only right after a pickup or a
-    defense.
+  - An "on" ending a group is kept for the next group's team name ("picked up by blue on" | "dark") right after a pickup or a
+    defense, when no name right before it could be substituted ("dropped... on" | "dark we have ..."), or after an identification.
+    An identification standing alone ("red shorts is joe on", "red shorts is on") is kept whole, so "Red shorts is Joe on" |
+    "dark." reads as "Red shorts is Joe on dark." (an identification, not a substitution). When the next group does not start with
+    a team, or a timeout or the end comes first, the kept words are read as said, ending at the group's end ("Kaia is on" |
+    "Flick to Joe": Kaia subs on). A substitution parsed that way a group late is no longer paired with a substitution off in the
+    group before ("Dylan off." | "Kaia is on" | ...: Dylan keeps no team).
 - **Team.** The team said ("for white"), else `team_of` the name, else another name of the same list, else the team of a player
   subbed off just before (within 10 s, nothing between: "Dylan off." | "Small gloves on."), which is also given to that player when
   only the later one's team is known. `team_of` is what the commentary said ("picks up for dark"), the rosters, and then the team of
@@ -209,7 +218,8 @@ Substitutions are `ultimate.Substitution` events: team, player as spoken, `sub_t
 - **Order and corrections.** A substitution said while a throw is still open waits behind it, so `events` stay in time order. A
   group with substitutions waits for the next group, like a score. "Nope" right after a substitution (alone, or followed by one of
   the same kind or player: "Dylan on." | "Nope." | "Dylan off, mock on.", "Kaia on. Sorry, Tristan on.") takes it back. "er" does
-  not.
+  not. When a correction parses the group before again, the swap pairing and "nope" are made again too, and a renamed substitution
+  that waited behind a throw keeps its correction ("Flick huck, caught by Joe, Tristan off." | "Sorry, Emily.": Emily off).
 - **Line-ups.** With `lineups=True`, a line-up said for one team ("on white we have kaia, pikachu, tristan, glasses and short
   crop") makes a substitution on for each name, at the time it was said. The team is the one said, or the one team all its names
   are known on; "so we have Michelle's brother" makes none. "starts with" and "on the field" are line-up words too. It is off by
@@ -239,8 +249,15 @@ Claude from the transcript and from short clips transcribed again with names in 
   file as mondegreens; dark has no team file.
 - Unknown teams are dark's first substitutions, before the commentary says any dark name's team ("Dylan picks up for dark" at
   20:53:52), and pairs of names nobody has placed yet.
-- The bundled game is unchanged: both of its transcripts give byte-identical events, with and without a timeout.
+- The bundled game is unchanged: both of its transcripts give byte-identical events, with and without a timeout. The review's
+  fixes (below) change no event of either game's transcripts.
 - Streaming gives the same events as batch (timeouts none and 6 s), final events never change, and events stay in time order.
+  Random commentary with substitution phrases (`test_random_commentary_with_substitutions_streams_like_batch`; 8,000 seeds
+  checked once) streams like batch with final events unchanged; before the review's fixes 2 of 6,500 seeds broke that, both by a
+  correction that parsed the group before again and lost a swap's team or a "nope".
+- Random play commentary without substitution phrases (1,500 seeds, the extraction tests' phrases): 14 give other throws and Ds
+  than before substitutions were added (26 before the review's fixes). 7 now read a split "X is Y on" | "dark" as the same words
+  in one group would, which the old code did not; 7 are "Fulmer on" | "dark", now a substitution, where the old code kept "on dark".
 
 ### The draft ground truth
 
