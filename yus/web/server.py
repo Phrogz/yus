@@ -920,8 +920,8 @@ def open_session(args: argparse.Namespace, now: dt.datetime) -> GameSession:
         if args.teams or args.descriptions:
             print("--load: using the saved game's teams and descriptions; --team and --descriptions are ignored", file=sys.stderr)
         return GameSession.load(args.load, llm=llm_assistant(args))
-    if not args.teams:
-        raise SystemExit("Give the teams (--team T.json, once per team), or --load a saved game")
+    if len(args.teams) < 2:
+        raise SystemExit("Give the teams (--team T.json, once for each team: two or more), or --load a saved game")
     from yus.processing.transcription import transcribe as tr
 
     directory = args.game_dir or pathlib.Path("games") / f"{now:%Y%m%dT%H%M%S}"

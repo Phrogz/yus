@@ -537,6 +537,8 @@ def test_open_session(tmp_path):
     assert open_session(build_arg_parser().parse_args(["--load", str(tmp_path / "g")]), dt.datetime.now()).game.teams == session.game.teams
     with pytest.raises(SystemExit, match="--team"):
         open_session(build_arg_parser().parse_args([]), dt.datetime.now())
+    with pytest.raises(SystemExit, match="two or more"):  # a forgotten second --team: the extractor would have no opponent
+        open_session(build_arg_parser().parse_args(["--team", str(TEAM_FILES[0]), "--game-dir", str(tmp_path / "h")]), dt.datetime.now())
 
 
 @contextlib.contextmanager
