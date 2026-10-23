@@ -172,10 +172,11 @@ and its descriptions file.
     The first event settled 80 s in without lag (once `LiveMerger` had locked the offset) and 142 s in with 60 s of lag.
     The same holds when the first commentator lags instead (30 and 90 s). After both fell silent, 2 events stayed
     provisional (10 with the fixed allowance, until the next event or `finish()`).
-  - A replay of the real two-commentator run ([results.md](results.md)) at its recorded arrival times settled events a
-    median 31 s after they were said (p90 41 s), against 44 s (53 s) with the fixed allowance. 108 synthetic games with
-    offsets of −7 to +12 s, lags, a 90 s pause and clocks drifting by up to 6 ms/s never changed a settled event or lowered
-    `settled_count`; without keeping the count, a drifting clock lowered it up to 12 times a game.
+  - In the real-audio runs with two commentators ([results.md](results.md)), events settled a median 31 s after they were
+    said (p90 41 s), against 44 s (53 s) with the fixed allowance. Replaying the earlier run's transcripts at their
+    recorded arrival times gave the same 31 s, with no settled event changing.
+  - 108 synthetic games (offsets of −7 to +12 s, lags, a 90 s pause, clocks drifting by up to 6 ms/s) never changed a
+    settled event or lowered `settled_count`. Without keeping the count, a drifting clock lowered it up to 12 times a game.
 - **Speed.**
 
   | | snapshot | snapshot + stats |

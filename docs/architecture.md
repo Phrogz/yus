@@ -50,3 +50,15 @@
      necessarily showing certain results as a table at all.)
 
 ![class relationships](img/architecture-classes.png)
+
+## End-to-End Results
+
+The whole live pipeline, from audio streamed to `yus-serve` to the official stream and stats, was run in real time on the
+real audio of the 2025-01-14 20:30 game (one commentator, 16 minutes) on an M3 Pro. See [results.md](results.md) for the
+numbers, what went wrong, and how to reproduce them.
+
+- **One commentator.** Event F1 0.975 (exact 0.792), final score 14–11 against 14–9, word error rate 0.117. Events showed
+  a median 8.1 s after they were said and settled after 11.1 s. The GPU was busy 49% of the time.
+- **Two commentators at once** (the same audio twice). Merged event F1 0.968–0.975 (exact 0.79–0.80), final score 13–10.
+  The GPU was 97–99% busy, and events showed after 9–10 s. Settling took a median 44 s, and 31 s after a fix in the session.
+- **Throughout:** the dashboard and admin pages answered while live, and reloading the saved game reproduced the final state.
