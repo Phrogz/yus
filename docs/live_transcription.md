@@ -43,7 +43,13 @@ a sliding window of recent audio and only commits words it has heard consistentl
    words before them that it did not hear again (all of them if the final decode heard nothing).
 
 Audio arriving while a decode runs waits for it; the next decode then sees all of it at once. A decoder slower than
-`period_s` therefore decodes less often instead of falling behind.
+`period_s` therefore decodes less often instead of falling behind. A caller that shares the GPU (`yus-serve`) can feed audio
+without decoding it and decode when its turn comes, and can change `period_s` between calls.
+
+With `speech` (`SileroSpeech`, or `--skip-silence`), a decode is skipped when no words wait to be committed (no open group,
+no pending hypothesis) and Silero VAD hears no speech in the new audio and the half second before it. `horizon` then moves
+as if the decode had heard nothing. Whisper still decodes at least once per backlog step (`window_s - force_s - period_s`),
+so audio the VAD missed is never left undecoded.
 
 ## Python API
 
@@ -71,13 +77,19 @@ transcriber.transcript                                           # every closed 
 ```
 
 - `LiveTranscriber(start, prompt=None, replacements=None, model="large-v3-turbo", backend="auto", sample_rate=16000,
-  period_s=3.0, window_s=20.0, hold_s=1.0, force_s=4.0, transcribe=None, gap_s=0.6)`. Other sample rates are resampled
-  (PyAV). Needs `force_s + period_s < window_s <= 30` (one Whisper window). A `start` with a UTC offset becomes a naive
-  local time (`transcribe.local_naive`), so word times are always naive.
-- `feed(samples) -> list[TranscriptGroup]` takes mono audio (a 1-D array, or 2-D with one channel; more channels raise
-  `ValueError`); `flush() -> list[TranscriptGroup]`; `transcript`, `open_text`, `pending_text`,
-  `committed` (every committed word as heard, with times in stream seconds), `passes` (each decode's time and compute, and
-  whether it `failed` and was ignored), `fired` (mondegreens replaced).
+  period_s=3.0, window_s=20.0, hold_s=1.0, force_s=4.0, transcribe=None, gap_s=0.6, speech=None)`. Other sample rates are
+  resampled (PyAV). Needs `force_s + period_s < window_s <= 30` (one Whisper window). A `start` with a UTC offset becomes a
+  naive local time (`transcribe.local_naive`), so word times are always naive.
+- `feed(samples, decode=True) -> list[TranscriptGroup]` takes mono audio (a 1-D array, or 2-D with one channel; more channels
+  raise `ValueError`). With `decode=False` the audio only waits for the next call that decodes; `due` says whether
+  `period_s` of new audio has arrived, so that a call with empty `samples` would decode. `flush() -> list[TranscriptGroup]`;
+  `transcript`, `open_text`, `pending_text`, `committed` (every committed word as heard, with times in stream seconds),
+  `passes` (each decode's time and compute, and whether it `failed` and was ignored or was `skipped` as silent), `fired`
+  (mondegreens replaced).
+- `period_s` can be set between calls, within the same bound. A shorter period applies after the next decode, which still
+  waits the old period, because `horizon` assumed that no decode would come sooner.
+- `speech(audio) -> bool`: whether 16 kHz audio holds speech. `SileroSpeech(threshold=0.5)` uses the Silero VAD shipped with
+  faster-whisper (7 ms of CPU per call).
 - When a decode raises, `feed()` (or `flush()`) raises too, but all the audio passed in still counts, so later word times stay
   right, and the groups completed before the error are returned by the next call. The server logs the error and goes on.
 - `horizon`: the time up to which every word has been returned in a group, for `EventExtractor.advance()` (see
@@ -122,7 +134,8 @@ GPU busy decoding 49% of the time (467 s for 961 s of audio)
 
 - `--speed X` - 1 plays the file in real time, 2 twice as fast. 0 (default) runs as fast as the decoder allows on a simulated
   clock that still accounts for decoding time, so latencies are the same as live.
-- `--period`, `--window`, `--hold`, `--force` - see [How It Works](#how-it-works).
+- `--period`, `--window`, `--hold`, `--force` - see [How It Works](#how-it-works). `--skip-silence` - skip silent decodes,
+  and print how many were skipped.
 - `--team`, `--sport`, `--recording-start`, `--backend`, `--model`, `--language`, `--prompt`, `--terms-file`,
   `--no-mondegreens` - as for `yus-transcribe`. `--sport-terms` also puts the sport's terms in the prompt.
 - `--start`/`--stop` - seconds into the file; `-o` - transcript JSON (default `<audio>.live.json`); `--timings` - each word's
@@ -206,7 +219,8 @@ the change (marked "replay").
 | Ignoring a decode that keeps no words where earlier decodes heard some (it used to empty the pending hypothesis, close the open group mid-phrase and move `horizon`), with the alignment fix below: **default** | replay of 9 recordings: WER -0.004 to 0.000 on dev, -0.003 to 0.000 on test; latency unchanged; groups starting within 0.6 s of the previous one (mostly a phrase split in two) 6-29 → 2-18 per recording; words that start before the horizon reported when they arrived 2-10 → 0-5 (all under 0.6 s before it) |
 | Alignment that is nearer an earlier committed copy of the same words is not used: **default** | replay: removes the one duplicate in 9 recordings ("to glasses" at 406 s, committed again after "flick to glasses, flick"; its group started before the previous one) |
 | ... and committing the words a failed decode leaves pending once they ended `force_s` ago | replay of 9 recordings: p95 latency 0.3-2.4 s lower, but WER -0.007 to +0.033 (mean +0.020): words the decode before a loop guessed. Not adopted |
-| Skipping decodes in silence | not built: Silero VAD hears speech in 291-297 of the game's 321 3-second chunks (gym chatter), so at most 9% of decodes could be skipped |
+| Skipping silent decodes (`--skip-silence`): Silero VAD on the new audio, only while no words wait to be committed | whole game, 1 run each with and without, same code: 6 of 315 decodes skipped (2%); WER 0.134 against 0.136, word latency 6.4 / 8.5 s (median / p90) against 6.6 / 9.0 s, event F1 0.975 both. Silero hears speech in 291-297 of the game's 321 3-second chunks (gym chatter), and most silent ones follow words still waiting. Off by default |
+| Period 4 s and 4.5 s (`yus-serve` decodes each of two commentators every 4.5 s) | whole game, 3 runs each, same code: WER 0.111-0.154 (mean 0.133) at 4 s and 0.128-0.131 (0.130) at 4.5 s, against 0.114-0.136 (0.127) at 3 s; event F1 0.948-0.970, 0.955-0.973 and 0.965-0.975 (exact means 0.760, 0.786, 0.786); word latency 7.6 / 10.1 s and 8.0 / 10.3 s (median / p90) against 6.4 / 8.5 s; GPU busy 36%, 32% and 47-50%. Within run-to-run variation but for latency |
 
 ## Limitations
 

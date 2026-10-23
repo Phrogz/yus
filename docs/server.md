@@ -13,9 +13,14 @@ browsers: / (score)  /admin (identify names)  /dashboard/ (Dash)  /api/state  <�
 - One Starlette app (served by uvicorn) holds one `GameSession` (see [session.md](session.md)).
 - Each commentator gets a `CommentatorStream`. It takes the phone's frames in order and only once, timestamps them, writes
   them to WAV files, and queues them for a `LiveTranscriber` (see [live_transcription.md](live_transcription.md)).
-- The transcriber runs in the commentator's own worker thread, so decoding never blocks the event loop. The worker feeds
-  everything queued in one call. It hands the session the groups that closed, the open and pending text, and
+- The transcriber runs in the commentator's own worker thread, so decoding never blocks the event loop. The worker gives it
+  the audio as it comes, without decoding. Once a decode is due, the worker waits for its turn on the GPU, then decodes all
+  the audio that came by then. It hands the session the groups that closed, the open and pending text, and
   `advance(transcriber.horizon)`.
+- One `DecodeScheduler` shares the GPU: one decode (or end-of-segment flush) at a time, in turns granted in the order asked,
+  so a commentator waits at most one decode of each other commentator. It also sets how often each transcriber decodes:
+  every `--period` (3 s) of new audio alone, and every `--period-per-commentator` (2.25 s) times the commentators being
+  transcribed, if longer: 4.5 s for two, 6.75 s for three (at most 15 s).
 - A background task runs every second. It advances commentators who are not streaming (stopped, paused, or no frame for
   2 minutes) to the current time, so their open throw becomes final after the session's timeout and other commentators'
   events can settle. It also saves the session every 10 s when it changed, and again at shutdown.
@@ -44,6 +49,8 @@ descriptions and has a "Finish game" button.
 | `--ssl-certfile F --ssl-keyfile F` | serve HTTPS |
 | `--asr auto\|mlx\|faster-whisper\|none` | Whisper backend. `none` only records audio. The model is loaded and warmed up once at startup and shared by all commentators |
 | `--model` | default `large-v3-turbo` |
+| `--period S`, `--period-per-commentator S` | decode each commentator's audio every max(S, live commentators × S') seconds (defaults 3 and 2.25) |
+| `--skip-silence` | skip a decode when Silero VAD hears no speech in the new audio and no words wait to be committed (off by default; see [live_transcription.md](live_transcription.md#how-it-works)) |
 | `--key KEY` | require a shared key: open links once with `?key=KEY` (it is then kept in a cookie). Use it whenever the server is reachable from outside your network |
 | `--no-audio` | do not save audio |
 | `--llm MODEL [--llm-url URL] [--llm-budget S]` | also send groups the rules may have misread to a local Ollama model (off by default; see [extraction.md](extraction.md#llm-assistance)) |
@@ -150,11 +157,13 @@ first, because browsers report a refused handshake only as 1006.
 ## HTTP API
 
 - `GET /api/state?events=20`: `version`, `finished`, `summary`, `score`, `sport`, `when`, `teams` (`name`, `names`,
-  `players`), `event_count`, `settled_count`, the last `events` official events (`-1` for all), `unresolved`
+  `players`), `event_count`, `settled_count`, `late_count` (merged events left out because they were reported after their
+  play had settled; see [session.md](session.md#behaviour)), the last `events` official events (`-1` for all), `unresolved`
   (`[{team, name, mentions}]`), `unmentioned` (`{team: [players]}`), `descriptions`, and `commentators`. Each commentator has
-  `CommentatorState`'s fields plus `connected`, `live`, `received_s`, `backlog_s`, `segments` and `error` (the transcriber's
-  last error, until it next works). Everything but `commentators` is cached per version and per `events`. A negative
-  `events`, or one past the number of events, means all of them.
+  `CommentatorState`'s fields plus `connected`, `live`, `received_s`, `backlog_s` (audio not decoded yet: up to a decode
+  period, plus the wait for a turn), `segments` and `error` (the transcriber's last error, until it next works).
+  Everything but `commentators` is cached per version and per `events`. A negative `events`, or one past the number of
+  events, means all of them.
 - `POST /api/describe` with `{"team", "descriptions": [...] | "...", "player"?, "label"?, "commentator"?}`: calls
   `GameSession.describe` and returns `{"description", "version"}`. Earlier events are resolved again. Bad input gets 400
   `{"error"}`.
@@ -181,11 +190,13 @@ from yus.web.replay import stream_audio
 result = stream_audio("ws://localhost:8000/ws/audio", samples_16k, "Gavin", speed=1)   # -> ReplayResult(frames, acked, finished, last, ...)
 ```
 
-- A transcriber needs `feed(samples)`, `flush()`, `pending_text`, `open_text` and `horizon`, as `LiveTranscriber` has. Tests
-  use a scripted fake.
-- `GameServer(session, factory, clock=time.time, tick=1, save_every=10, idle_after=120, record_audio=True)`.
-- `whisper_factory` loads Whisper once, builds the roster prompt and the mondegreen replacements, and serializes decodes
-  (one GPU).
+- A transcriber needs `feed(samples, decode=True)`, `due`, a settable `period_s`, `flush()`, `pending_text`, `open_text` and
+  `horizon`, as `LiveTranscriber` has. Tests use a scripted fake.
+- `GameServer(session, factory, clock=time.time, tick=1, save_every=10, idle_after=120, record_audio=True, scheduler=None)`;
+  `scheduler` defaults to `DecodeScheduler(period_s=3.0, per_commentator_s=2.25)`. `DecodeScheduler.turn()` is a context
+  manager that holds the GPU; `busy_s` totals the turns.
+- `whisper_factory(teams, ..., skip_silence=False)` loads Whisper once, builds the roster prompt and the mondegreen
+  replacements, and serializes decodes (one GPU).
 
 ## Measured
 
@@ -220,7 +231,11 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
   - 440 Hz and 3 kHz pass at 48 and 44.1 kHz, within 0.15 dB.
   - 12 kHz, which would alias to 4 kHz, comes out at RMS 0.001 (−57 dB) from 48 kHz.
   - In headless Chrome, a 0.5-amplitude 440 Hz tone at 44.1 kHz reached the transcriber at 16 kHz with its RMS within 2%.
-- **Tests.** `tests/test_server.py`, 10 s:
+- **Decode scheduler**, with Whisper on the real audio streamed twice at once ([results.md](results.md)): the GPU was 65%
+  busy (98% with both decoding every 3 s), the longest decode took 2.4 s (5.8 s), and audio waited at most 6.7 s to be
+  decoded (12.7 s for the worker before). With one commentator the decodes, transcript and events were the same as
+  before.
+- **Tests.** `tests/test_server.py`, 11 s:
   - pages and static files;
   - hello and frames through to groups, events and `/api/state`, with timestamps on the server's clock;
   - a reconnect continuing the same segment, with resent frames dropped;
@@ -232,6 +247,8 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
     handshake, redirects that stay on the server);
   - pauses and silent connected phones ending their segment; phone times that cannot be right; the `/api/state` cache;
     a transcription error clearing;
+  - decode turns taken one at a time in the order asked, the period growing with the commentators live and shrinking when
+    one stops, and a decode that waited for its turn taking all the audio that came meanwhile;
   - the dashboard mount (a fake, and the real `yus.web.dashboard`);
   - `yus-replay` against a real uvicorn server;
   - `node --check` of the page scripts, and the downsampler;
@@ -250,10 +267,11 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
   locks. The page reports silence, but cannot prevent it. If iOS also stops the page's scripts, the page cannot send
   `pause`, and the server ends that commentator's segment only after 2 minutes without a frame.
 - **Whisper through the server** was run only with `yus-replay` on one Mac (see [results.md](results.md)): events showed
-  about 8 s after they were said, and settled after 11 s with one commentator and 31 s with two.
-- **One GPU, taking turns.** Decodes are serialized. One commentator kept an M3 Pro busy 49% of the time (1.44 s per 3 s
-  decode), and two kept it 97–99% busy, with audio waiting up to 8 s. With more, each transcriber decodes less often and
-  falls further behind. Watch `backlog_s` and the transcript lag.
+  a median 8 s after they were said with one commentator and 10 s with two, and settled after 12 s and 23 s.
+- **One GPU, taking turns.** One commentator keeps an M3 Pro busy 49% of the time (1.44 s per 3 s decode). Two, each
+  decoding every 4.5 s, kept it 65% busy (98% when both decoded every 3 s, with audio waiting up to 12.7 s); their words
+  commit about 1.6 s later than at 3 s. Three would decode every 6.75 s, at about the same load (not tried); more would
+  commit later still. Watch `backlog_s` and the transcript lag.
 - **Long outages.**
   - After 2 minutes without a frame, connected or not, a commentator's segment ends and they are advanced to the current
     time. The server cannot tell a phone that paused without saying so from a network outage, so it does not do this

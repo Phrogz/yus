@@ -50,6 +50,7 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
 | `official` | one commentator: its resolved stream; several: the merged stream. Teams by their first names either way |
 | `settled_count`, `provisional` | `official.events[:settled_count]` are final; `provisional` lists the rest |
 | `merge` | the `MergeResult` with two or more commentators (offsets, pairs, conflicts, name links); else `None` |
+| `late` | merged events left out of `official`: a commentator reported them after their play had settled (see below) |
 | `associations` | `HeardAssociation`s: `commentator`, `team`, `description`, `name` (as spoken), `player` (as recorded) |
 | `descriptions` | every description in effect, in the order recorded: given, described and heard |
 | `stats` | `compute_stats(official, game.teams, provisional_from=settled_count)` |
@@ -60,19 +61,31 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
 
 - **Settled events.**
   - One commentator: `settled_count` is the extractor's `final_count`. At most the one open throw is provisional.
-  - Several: it is the merge's `settled`, cut before the first merged event that contains a provisional raw event.
-    Merged events settle only up to the slowest commentator's progress: the start of their last group, or their last
-    `advance()` once more than `timeout` seconds without words followed that group. The session sets the merge's `settle`
-    to how far that progress lags the newest event, plus 2 s (`SETTLE_MARGIN`, for a refined offset or a word committed
-    just before its horizon). Once every commentator's progress has passed the newest event (a pause in play, the end of the
-    game), everything settles but the last throw and what follows it. While a commentator has neither groups nor an
+  - Several: merged events settle only up to the slowest commentator's progress: the start of their last group, or their
+    last `advance()` once more than `timeout` seconds without words followed that group. They settle in two ways:
+    - as the merge settles them, cut before the first merged event that contains a provisional raw event. The session sets
+      the merge's `settle` to how far that progress lags the newest event, plus 2 s (`SETTLE_MARGIN`, for a refined offset
+      or a word committed just before its horizon). A throw then waits for the next throw, which can repair its outcome;
+    - once every commentator's progress is past them by the merge's `tolerance` plus `SETTLE_MARGIN` (5 s), their raw
+      events are final and every offset is kept: no event still to come can pair with them, so they settle without waiting
+      for what follows. In a pause in play, or at the end of the game, the last throw settles too; it is then not repaired
+      by the next event.
+  - A commentator whose transcript has had no words for 30 s (`ABSENT_S`) past their last group, or who has said nothing
+    yet, does not hold settling back once advanced, unless all are quiet. While a commentator has neither groups nor an
     `advance()`, nothing settles.
-  - A merged event that settled stays settled while the commentators and descriptions stay the same, even when a refined
-    offset makes a later merge more cautious (`session.json` keeps the count).
+  - **Late reports.** What such a commentator says later about play that settled meanwhile (audio a phone kept through an
+    outage, or a long lag) is left out: settled events stay as they are. A merged event that holds a settled raw event is
+    already shown; one that does not, and comes before the last such event, is left out of `official` and listed in
+    `late`. The session logs each once (logger `yus.session`), and `/api/state` counts them. They stay out after `finish()`,
+    so the official stream can then have fewer events than `yus-game`'s batch merge of the same transcripts.
+  - A merged event that settled stays settled, in its place and with its fields, while the commentators stay the same, even
+    when a refined offset makes a later merge more cautious (`session.json` keeps the events and the raw events they came
+    from).
   - After `finish()`: every event is settled.
-  - Settled events never change as commentary arrives, and `settled_count` never decreases. A description does change them:
-    `describe()` and spoken identifications re-resolve the names of every event, settled or not (and, with several
-    commentators, may change how events pair).
+  - Settled events never change as commentary arrives, and `settled_count` never decreases. A description changes their
+    names only: `describe()` and spoken identifications re-resolve the names of every event, settled or not. A settled event
+    takes the names of the merged event made from the same raw events, else each of its names is resolved again from the
+    raw event it came from.
 - **Spoken identifications.** The extractor finds identifications like "oh, red shorts is kaia". Each one is recorded at once
   as a description for that commentator's stream: `PlayerDescription(team, [description], player, commentator=...)`.
   - A commentator's own record beats shared ones. To correct a heard identification, `describe()` the same description
@@ -125,7 +138,7 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
 | `transcripts/<commentator>.json` | that commentator's `Transcript` (the name made file-safe: `B / Other` → `B_Other`) |
 | `events/<commentator>.json` | raw `EventStream`, as `yus-events` writes it (`yus-score`, `yus-stats` read it) |
 | `official.json` | the official `EventStream` |
-| `session.json` | version, timeout, finished, commentators (file, focus, pending text, last `advance`, LLM answers), associations heard, the merger's state |
+| `session.json` | version, timeout, finished, commentators (file, focus, pending text, last `advance`, LLM answers), associations heard, the merger's state, the settled merged events and the raw events they came from |
 
 File names differ even on a disk that ignores case and Unicode normalization (macOS): `Gavin` and `gavin` get `Gavin.json`
 and `gavin-2.json`.
@@ -171,17 +184,21 @@ and its descriptions file.
 
     | second commentator's lag | 0 s | 15 s | 30 s | 60 s | 120 s |
     |---|---|---|---|---|---|
-    | provisional events, median (max) | 5 (12) | 8 (14) | 11.5 (17) | 18 (24) | 30 (40) |
-    | ... with a fixed 20 s allowance (before) | 8 (12) | 8 (14) | 11 (17) | 17 (24) | 30 (39) |
+    | provisional events, median (max) | 3 (12) | 6 (14) | 10 (17) | 16 (22) | 28 (37) |
+    | ... settling only as the merge settles | 5 (12) | 8 (14) | 12 (17) | 18 (24) | 30 (40) |
 
-    The first event settled 80 s in without lag (once `LiveMerger` had locked the offset) and 142 s in with 60 s of lag.
-    The same holds when the first commentator lags instead (30 and 90 s). After both fell silent, 2 events stayed
-    provisional (10 with the fixed allowance, until the next event or `finish()`).
-  - In the real-audio runs with two commentators ([results.md](results.md)), events settled a median 31 s after they were
-    said (p90 41 s), against 44 s (53 s) with the fixed allowance. Replaying the earlier run's transcripts at their
-    recorded arrival times gave the same 31 s, with no settled event changing.
-  - 108 synthetic games (offsets of −7 to +12 s, lags, a 90 s pause, clocks drifting by up to 6 ms/s) never changed a
-    settled event or lowered `settled_count`. Without keeping the count, a drifting clock lowered it up to 12 times a game.
+    The same holds when the first commentator lags instead (30 and 90 s). After both fell silent, every event settled
+    (2 stayed provisional when merged events settled only as the merge settled them, until the next event or `finish()`).
+    A description in the middle of the game renamed 28 settled events and changed nothing else (test).
+  - 108 synthetic games (offsets of −7 to +12 s, lags, a 90 s pause, clocks drifting by up to 6 ms/s, groups arriving 7 s
+    after they end) never changed a settled event or lowered `settled_count`. The median game's median settle latency went
+    from 45 to 37 s; the events left provisional at the end from 2 to 0, and those still provisional 30 s into the pause from
+    up to 4 to up to 2. In 9 games, where the reference commentator lagged 30 s and play resumed after the pause, 1–2 of
+    their reports came after their play had settled and were left out.
+  - In the real-audio runs with two commentators ([results.md](results.md)), events settled a median 23 s after they were
+    said (p90 30 s), against 34 s (42 s) before; no settled event changed, no report came late, and none was left
+    provisional 15 s after the end (2 before). Re-feeding each run's groups at the times they arrived, with the old and
+    the new session, gave 32.8 → 24.3 s and 31.9 → 23.1 s, and the same final stream.
 - **Speed.**
 
   | | snapshot | snapshot + stats |
@@ -200,14 +217,21 @@ and its descriptions file.
 - **Stats dominate.** About 97% of the cost of reading `stats` after every group is `compute_stats` building its DataFrames.
   A dashboard should read stats once per version, not once per widget.
 - **Timeouts.** Silence finalizes an open throw only if the server calls `advance()` (or `replay()` does). Without it, a
-  throw stays provisional until the commentator speaks again, and with several commentators a silent one holds settling back.
+  throw stays provisional until the commentator speaks again, and with several commentators one who is not advanced holds
+  settling back.
+- **Late reports are dropped.** A commentator quiet for 30 s stops holding settling back, so what they report later about
+  play that settled meanwhile is left out (`late`), even after `finish()`; `yus-game` on the saved transcripts gives the
+  batch result. A commentator whose transcription lags the others' by several seconds can lose reports this way when play
+  resumes after a long pause.
+- **No repair after a pause.** A throw that settles because everyone went quiet past it is not repaired by the event after
+  the pause (a pickup by the other team that shows it was not caught).
 - **Unscoped `advance()`.** Without a commentator, it tells every extractor that the transcript is complete up to `now`. Use
   it only when all transcribers have caught up.
 - **Progress is trusted.** Settling assumes no commentator's words arrive earlier than their last `advance()` (or, after a
   group, earlier than that group's start). A transcriber that commits a word before its own horizon can still unsettle events.
 - **Merging.** The merge inherits `LiveMerger`'s limits:
-  - settling waits about 30 s (the slower commentator's transcription lag, their clock offset, `tolerance` and the next
-    throw), and until offsets are locked; a lagging commentator adds their lag;
+  - settling waits about 23 s (the slower commentator's transcription lag, their clock offset, and `tolerance` plus 2 s),
+    and until offsets are locked; a lagging commentator adds their lag;
   - its results depend on how often `snapshot()` is called, since each call merges once;
   - it is tested only on synthetic second commentators.
 - **Name scope.** A heard identification applies only to the commentator who said it. Another commentator's matching
