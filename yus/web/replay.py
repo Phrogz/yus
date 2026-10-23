@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import datetime as dt
 import json
 import pathlib
 import ssl
@@ -38,6 +39,7 @@ class ReplayResult:
     acked: int  # the last frame the server acknowledged
     finished: bool  # whether the server confirmed it had transcribed everything before the timeout
     last: dict[str, Any]  # the last update with the commentator's view (transcript, pending, events, summary)
+    start: dt.datetime  # capture time of the first sample, naive local time on this computer's clock: the audio's second 0
 
 
 def frames(samples: np.ndarray, start_ms: float, frame_s: float = FRAME_S, sample_rate: int = SAMPLE_RATE) -> Iterator[bytes]:
@@ -101,7 +103,8 @@ def stream_audio(
         finished = listener.done.wait(timeout)
         ws.close()
         listener.join(5)
-    return ReplayResult(sent, len(samples) / SAMPLE_RATE, time.monotonic() - began, listener.acked, finished, listener.last)
+    start = dt.datetime.fromtimestamp(start_ms / 1000)
+    return ReplayResult(sent, len(samples) / SAMPLE_RATE, time.monotonic() - began, listener.acked, finished, listener.last, start)
 
 
 class _Listener(threading.Thread):
@@ -206,6 +209,7 @@ def main() -> int:
         print(f"Failed: {error}", file=sys.stderr)
         return 1
     print(f"Sent {result.frames} frames ({result.audio_s:.1f} s) in {result.elapsed_s:.1f} s; acknowledged up to {result.acked}", file=sys.stderr)
+    print(f"Audio second {args.start or 0:g} was stamped {result.start.isoformat(timespec='milliseconds')} (this computer's clock)", file=sys.stderr)
     print(result.last.get("summary", "") if result.finished else "The server had not finished transcribing when the timeout ran out", file=sys.stderr)
     return 0 if result.finished else 2
 

@@ -54,8 +54,10 @@ yus-replay 20250114T2030-0700.ogg --commentator Gavin --url wss://192.168.1.20:8
 ```
 
 It prints transcript lines, final events and score changes. At the end it stops and waits until the server has transcribed
-everything. `--speed 2` streams twice as fast and `--speed 0` as fast as possible. `--start`/`--stop` select seconds of the
-file. Use `--key` with the server's key, and `--insecure` to skip checking a self-signed certificate.
+everything, then prints when the audio's first sample was stamped ("Audio second 0 was stamped 2026-10-22T20:01:02.345").
+The server times the audio from that moment (plus the few ms the hello took), so subtracting it maps the game's times back
+onto the file's. `--speed 2` streams twice as fast and `--speed 0` as fast as possible. `--start`/`--stop` select seconds of
+the file. Use `--key` with the server's key, and `--insecure` to skip checking a self-signed certificate.
 
 ### HTTPS for phones
 

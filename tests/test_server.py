@@ -563,10 +563,13 @@ def test_replay_streams_audio_to_a_running_server(game, tmp_path):
     samples = (0.1 * np.sin(np.arange(16000 * 6) * 2 * np.pi * 440 / 16000)).astype(np.float32)
     messages = []
     with running(create_app(server, dashboard=False)) as url:
+        before = dt.datetime.now()
         result = replay.stream_audio(url, samples, "Replay", focus_team="white", speed=0, on_message=messages.append, timeout=10)
         with pytest.raises(RuntimeError, match="No team"):
             replay.stream_audio(url, samples[:1600], "Other", focus_team="purple", speed=0)
     assert result.finished and result.frames == 60 and result.acked == 59 and result.audio_s == 6.0
+    assert before <= result.start <= before + dt.timedelta(seconds=2)  # the first sample's capture time, which the server stamps
+    assert dt.timedelta(0) <= factory.made[0].start - result.start < dt.timedelta(seconds=1)
     assert [line["text"] for line in result.last["transcript"]] == PHRASES
     assert result.last["summary"] == "Dump & Drizzle 1, Category 5 0"
     (transcriber,) = factory.made
