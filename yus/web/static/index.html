@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>YUS Live Game</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header><a href="/">YUS</a><span id="when" class="muted"></span></header>
+  <main>
+    <section>
+      <div id="score" class="score">-</div>
+      <div id="summary" class="muted"></div>
+    </section>
+    <nav class="links">
+      <a href="/commentate">Commentate</a>
+      <a href="/dashboard/">Dashboard</a>
+      <a href="/admin">Admin</a>
+      <a href="/api/state">State (JSON)</a>
+    </nav>
+    <section>
+      <h2>Commentators</h2>
+      <ul id="commentators"><li class="muted">None yet</li></ul>
+    </section>
+    <section>
+      <h2>Latest events</h2>
+      <ol id="events"><li class="muted">None yet</li></ol>
+    </section>
+  </main>
+  <script src="/static/game.js"></script>
+</body>
+</html>

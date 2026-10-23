@@ -1,0 +1,11 @@
+{
+  "players": [
+    {"team": "white", "descriptions": ["close crop", "short crop", "short crown"], "player": "Ben Kishter"},
+    {"team": "white", "descriptions": ["the kid", "kidd"], "player": "Serayan Knappe-Butler"},
+    {"team": "black", "descriptions": ["hat"], "player": "Christopher Baines"},
+    {"team": "black", "descriptions": ["naked"], "player": "Collin Ruprecht"},
+    {"team": "black", "descriptions": ["blue", "bluey"], "label": "bluey"},
+    {"team": "black", "descriptions": ["yellow", "yellow border", "yellow fringe", "yellow stripe", "yellow stripe yellow fringe"], "label": "yellow sleeve"},
+    {"team": "black", "descriptions": ["leg stripe", "leg stripes", "pants stripe", "purple leg stripe"]}
+  ]
+}

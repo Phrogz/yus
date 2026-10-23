@@ -1,4 +1,5 @@
 import copy
+import pathlib
 from datetime import datetime as DT
 from datetime import timedelta as TD
 
@@ -6,46 +7,15 @@ import yus
 from yus.sports import ultimate
 from yus.sports.ultimate import indoor
 
+DATA = pathlib.Path(__file__).parent
+TEAM_FILES = [DATA / "team_dump_and_drizzle.json", DATA / "team_category_5.json"]  # white, then dark
+
 
 def build_game() -> yus.Game:
     game = yus.Game(
         sport="ultimate/indoor",
         when=DT.fromisoformat("2025-01-14T20:31:11.5"),
-        teams=[
-            yus.Team(
-                names=["Dump & Drizzle", "white", "light"],
-                players={
-                    "Matt Whitlock": ["Pikachu"],
-                    "Kaia Mann": [],
-                    "Emily Kraus": [],
-                    "Alexis Rosas": [],
-                    "Ari Weissman": [],
-                    "Ben Kishter": [],
-                    "Drew Rasmussen": [],
-                    "Joe Oaks": [],
-                    "Serayan Knappe-Butler": [],
-                    "Stephen Butler": [],
-                    "Tristan Weber": [],
-                },
-            ),
-            yus.Team(
-                names=["Category 5", "Cat 5", "dark", "black"],
-                players={
-                    "Jennifer Dasenbrock": [],
-                    "Molly Lanning": [],
-                    "Adam Federbusch": ["Busch"],
-                    "Christopher Baines": [],
-                    "Collin Ruprecht": [],
-                    "Jacob Gernert": [],
-                    "Jerry Swider": [],
-                    "Nathan Speer": [],
-                    "Sammy Allen": [],
-                    "Thomas McPherson": [],
-                    "Zach Ehler": ["Turtle"],
-                    "George Abuhamad": [],
-                },
-            ),
-        ],
+        teams=[yus.Team.model_validate_json(path.read_text()) for path in TEAM_FILES],
     )
 
     transcript = build_transcript(game)
@@ -70,11 +40,11 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
             yus.Word(text="have", confidence=0.749, start=DT.fromisoformat("2025-01-14T20:30:48.5"), duration=TD(seconds=0.3)),
             yus.Word(text="kaia", confidence=0.592, start=DT.fromisoformat("2025-01-14T20:30:48.8"), duration=TD(seconds=0.75)),
             yus.Word(text="pikachu", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:30:49.55"), duration=TD(seconds=0.9)),
-            yus.Word(text="tristan", confidence=0.672, start=DT.fromisoformat("2025-01-14T20:30:50.45"), duration=TD(seconds=0.6)),
-            yus.Word(text="glasses", confidence=0.714, start=DT.fromisoformat("2025-01-14T20:30:51.05"), duration=TD(seconds=0.6)),
-            yus.Word(text="and", confidence=0.435, start=DT.fromisoformat("2025-01-14T20:30:51.65"), duration=TD(seconds=0.3)),
-            yus.Word(text="short", confidence=0.758, start=DT.fromisoformat("2025-01-14T20:30:51.95"), duration=TD(seconds=0.3)),
-            yus.Word(text="crop", confidence=0.833, start=DT.fromisoformat("2025-01-14T20:30:52.25"), duration=TD(seconds=0.3)),
+            yus.Word(text="tristan", confidence=0.672, start=DT.fromisoformat("2025-01-14T20:30:51.9"), duration=TD(seconds=0.6)),
+            yus.Word(text="glasses", confidence=0.714, start=DT.fromisoformat("2025-01-14T20:30:53.0"), duration=TD(seconds=0.6)),
+            yus.Word(text="and", confidence=0.435, start=DT.fromisoformat("2025-01-14T20:30:53.9"), duration=TD(seconds=0.3)),
+            yus.Word(text="short", confidence=0.758, start=DT.fromisoformat("2025-01-14T20:30:54.2"), duration=TD(seconds=0.3)),
+            yus.Word(text="crop", confidence=0.833, start=DT.fromisoformat("2025-01-14T20:30:54.5"), duration=TD(seconds=0.3)),
         ]
     )
     # "black pulls"
@@ -116,10 +86,10 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     # "backhand to close crop"
     transcript.add_group().add_interpretation(confidence=0.706).words.extend(
         [
-            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:22.8"), duration=TD(seconds=0.6)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:23.4"), duration=TD(seconds=0.3)),
-            yus.Word(text="close", confidence=0.608, start=DT.fromisoformat("2025-01-14T20:31:23.7"), duration=TD(seconds=0.3)),
-            yus.Word(text="crop", confidence=0.833, start=DT.fromisoformat("2025-01-14T20:31:24"), duration=TD(seconds=0.3)),
+            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:24.8"), duration=TD(seconds=0.6)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:25.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="close", confidence=0.608, start=DT.fromisoformat("2025-01-14T20:31:25.7"), duration=TD(seconds=0.3)),
+            yus.Word(text="crop", confidence=0.833, start=DT.fromisoformat("2025-01-14T20:31:26"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -136,24 +106,24 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     # "backhand swing to glasses"
     transcript.add_group().add_interpretation(confidence=0.717).words.extend(
         [
-            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:30.1"), duration=TD(seconds=0.6)),
-            yus.Word(text="swing", confidence=0.769, start=DT.fromisoformat("2025-01-14T20:31:30.7"), duration=TD(seconds=0.3)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:31"), duration=TD(seconds=0.3)),
-            yus.Word(text="glasses", confidence=0.714, start=DT.fromisoformat("2025-01-14T20:31:31.3"), duration=TD(seconds=0.6)),
+            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:31.8"), duration=TD(seconds=0.6)),
+            yus.Word(text="swing", confidence=0.769, start=DT.fromisoformat("2025-01-14T20:31:32.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:32.7"), duration=TD(seconds=0.3)),
+            yus.Word(text="glasses", confidence=0.714, start=DT.fromisoformat("2025-01-14T20:31:33"), duration=TD(seconds=0.6)),
         ]
     )
 
     # "flick to kaia deed by somebody on dark"
     transcript.add_group().add_interpretation(confidence=0.738).words.extend(
         [
-            yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:31:33"), duration=TD(seconds=0.3)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:33.3"), duration=TD(seconds=0.3)),
-            yus.Word(text="kaia", confidence=0.592, start=DT.fromisoformat("2025-01-14T20:31:33.6"), duration=TD(seconds=0.75)),
-            yus.Word(text="deed", confidence=0.841, start=DT.fromisoformat("2025-01-14T20:31:34.35"), duration=TD(seconds=0.3)),
-            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:31:34.65"), duration=TD(seconds=0.3)),
-            yus.Word(text="somebody", confidence=0.796, start=DT.fromisoformat("2025-01-14T20:31:34.95"), duration=TD(seconds=0.9)),
-            yus.Word(text="on", confidence=0.478, start=DT.fromisoformat("2025-01-14T20:31:35.85"), duration=TD(seconds=0.3)),
-            yus.Word(text="dark", confidence=0.865, start=DT.fromisoformat("2025-01-14T20:31:36.15"), duration=TD(seconds=0.3)),
+            yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:31:36.5"), duration=TD(seconds=0.3)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:36.8"), duration=TD(seconds=0.3)),
+            yus.Word(text="kaia", confidence=0.592, start=DT.fromisoformat("2025-01-14T20:31:37.1"), duration=TD(seconds=0.75)),
+            yus.Word(text="deed", confidence=0.841, start=DT.fromisoformat("2025-01-14T20:31:37.85"), duration=TD(seconds=0.3)),
+            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:31:38.85"), duration=TD(seconds=0.3)),
+            yus.Word(text="somebody", confidence=0.796, start=DT.fromisoformat("2025-01-14T20:31:39.15"), duration=TD(seconds=0.9)),
+            yus.Word(text="on", confidence=0.478, start=DT.fromisoformat("2025-01-14T20:31:40.05"), duration=TD(seconds=0.3)),
+            yus.Word(text="dark", confidence=0.865, start=DT.fromisoformat("2025-01-14T20:31:40.35"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -183,10 +153,10 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     # "backhand to yellow border"
     transcript.add_group().add_interpretation(confidence=0.775).words.extend(
         [
-            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:47"), duration=TD(seconds=0.6)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:47.6"), duration=TD(seconds=0.3)),
-            yus.Word(text="yellow", confidence=0.789, start=DT.fromisoformat("2025-01-14T20:31:47.9"), duration=TD(seconds=0.6)),
-            yus.Word(text="border", confidence=0.930, start=DT.fromisoformat("2025-01-14T20:31:48.5"), duration=TD(seconds=0.6)),
+            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:48.45"), duration=TD(seconds=0.6)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:51.5"), duration=TD(seconds=0.3)),
+            yus.Word(text="yellow", confidence=0.789, start=DT.fromisoformat("2025-01-14T20:31:51.8"), duration=TD(seconds=0.6)),
+            yus.Word(text="border", confidence=0.930, start=DT.fromisoformat("2025-01-14T20:31:52.4"), duration=TD(seconds=0.6)),
         ]
     )
 
@@ -194,41 +164,41 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     transcript.add_group().add_interpretation(confidence=0.789).words.extend(
         [
             yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:31:56.1"), duration=TD(seconds=0.6)),
-            yus.Word(text="federbusch", confidence=0.930, start=DT.fromisoformat("2025-01-14T20:31:56.7"), duration=TD(seconds=0.9)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:31:57.6"), duration=TD(seconds=0.3)),
-            yus.Word(text="naked", confidence=0.931, start=DT.fromisoformat("2025-01-14T20:31:57.9"), duration=TD(seconds=0.6)),
-            yus.Word(text="for", confidence=0.857, start=DT.fromisoformat("2025-01-14T20:31:58.5"), duration=TD(seconds=0.3)),
-            yus.Word(text="a", confidence=0.639, start=DT.fromisoformat("2025-01-14T20:31:58.8"), duration=TD(seconds=0.3)),
-            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:31:59.1"), duration=TD(seconds=0.3)),
+            yus.Word(text="federbusch", confidence=0.930, start=DT.fromisoformat("2025-01-14T20:31:58.45"), duration=TD(seconds=0.9)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:32:00.9"), duration=TD(seconds=0.3)),
+            yus.Word(text="naked", confidence=0.931, start=DT.fromisoformat("2025-01-14T20:32:01.2"), duration=TD(seconds=0.6)),
+            yus.Word(text="for", confidence=0.857, start=DT.fromisoformat("2025-01-14T20:32:01.8"), duration=TD(seconds=0.3)),
+            yus.Word(text="a", confidence=0.639, start=DT.fromisoformat("2025-01-14T20:32:02.1"), duration=TD(seconds=0.3)),
+            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:32:02.4"), duration=TD(seconds=0.3)),
         ]
     )
 
     # "picked up by pikachu"
     transcript.add_group().add_interpretation(confidence=0.910).words.extend(
         [
-            yus.Word(text="picked", confidence=0.906, start=DT.fromisoformat("2025-01-14T20:32:02.1"), duration=TD(seconds=0.3)),
-            yus.Word(text="up", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:32:02.4"), duration=TD(seconds=0.3)),
-            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:32:02.7"), duration=TD(seconds=0.3)),
-            yus.Word(text="pikachu", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:32:03"), duration=TD(seconds=0.9)),
+            yus.Word(text="picked", confidence=0.906, start=DT.fromisoformat("2025-01-14T20:32:02.7"), duration=TD(seconds=0.3)),
+            yus.Word(text="up", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:32:03"), duration=TD(seconds=0.3)),
+            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:32:03.3"), duration=TD(seconds=0.3)),
+            yus.Word(text="pikachu", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:32:03.6"), duration=TD(seconds=0.9)),
         ]
     )
 
     # "flick to close crop"
     transcript.add_group().add_interpretation(confidence=0.723).words.extend(
         [
-            yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:32:03.4"), duration=TD(seconds=0.3)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:32:03.7"), duration=TD(seconds=0.3)),
-            yus.Word(text="close", confidence=0.608, start=DT.fromisoformat("2025-01-14T20:32:04"), duration=TD(seconds=0.3)),
-            yus.Word(text="crop", confidence=0.833, start=DT.fromisoformat("2025-01-14T20:32:04.3"), duration=TD(seconds=0.3)),
+            yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:32:04.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:32:04.7"), duration=TD(seconds=0.3)),
+            yus.Word(text="close", confidence=0.608, start=DT.fromisoformat("2025-01-14T20:32:05"), duration=TD(seconds=0.3)),
+            yus.Word(text="crop", confidence=0.833, start=DT.fromisoformat("2025-01-14T20:32:05.3"), duration=TD(seconds=0.3)),
         ]
     )
 
     # "backhand to joe"
     transcript.add_group().add_interpretation(confidence=0.739).words.extend(
         [
-            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:32:05.3"), duration=TD(seconds=0.6)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:32:05.9"), duration=TD(seconds=0.3)),
-            yus.Word(text="joe", confidence=0.835, start=DT.fromisoformat("2025-01-14T20:32:06.2"), duration=TD(seconds=0.3)),
+            yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:32:06.9"), duration=TD(seconds=0.6)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:32:07.5"), duration=TD(seconds=0.3)),
+            yus.Word(text="joe", confidence=0.835, start=DT.fromisoformat("2025-01-14T20:32:07.8"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -239,11 +209,11 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
             yus.Word(text="big", confidence=0.430, start=DT.fromisoformat("2025-01-14T20:32:10.2"), duration=TD(seconds=0.3)),
             yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:32:10.5"), duration=TD(seconds=0.3)),
             yus.Word(text="huck", confidence=0.729, start=DT.fromisoformat("2025-01-14T20:32:10.8"), duration=TD(seconds=0.3)),
-            yus.Word(text="off", confidence=0.867, start=DT.fromisoformat("2025-01-14T20:32:11.1"), duration=TD(seconds=0.3)),
-            yus.Word(text="the", confidence=0.759, start=DT.fromisoformat("2025-01-14T20:32:11.4"), duration=TD(seconds=0.3)),
-            yus.Word(text="wall", confidence=0.964, start=DT.fromisoformat("2025-01-14T20:32:11.7"), duration=TD(seconds=0.3)),
-            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:32:12"), duration=TD(seconds=0.3)),
-            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:32:12.3"), duration=TD(seconds=0.3)),
+            yus.Word(text="off", confidence=0.867, start=DT.fromisoformat("2025-01-14T20:32:14.1"), duration=TD(seconds=0.3)),
+            yus.Word(text="the", confidence=0.759, start=DT.fromisoformat("2025-01-14T20:32:14.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="wall", confidence=0.964, start=DT.fromisoformat("2025-01-14T20:32:14.7"), duration=TD(seconds=0.3)),
+            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:32:15"), duration=TD(seconds=0.3)),
+            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:32:15.3"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -843,9 +813,9 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
             yus.Word(text="the", confidence=0.759, start=DT.fromisoformat("2025-01-14T20:35:23.7"), duration=TD(seconds=0.3)),
             yus.Word(text="end", confidence=0.588, start=DT.fromisoformat("2025-01-14T20:35:24"), duration=TD(seconds=0.3)),
             yus.Word(text="zone", confidence=0.716, start=DT.fromisoformat("2025-01-14T20:35:24.3"), duration=TD(seconds=0.3)),
-            yus.Word(text="caught", confidence=0.814, start=DT.fromisoformat("2025-01-14T20:35:24.6"), duration=TD(seconds=0.3)),
-            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:35:24.9"), duration=TD(seconds=0.3)),
-            yus.Word(text="hat", confidence=0.880, start=DT.fromisoformat("2025-01-14T20:35:25.2"), duration=TD(seconds=0.3)),
+            yus.Word(text="caught", confidence=0.814, start=DT.fromisoformat("2025-01-14T20:35:26.1"), duration=TD(seconds=0.3)),
+            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:35:26.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="hat", confidence=0.880, start=DT.fromisoformat("2025-01-14T20:35:26.7"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -1439,8 +1409,8 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     transcript.add_group().add_interpretation(confidence=0.822).words.extend(
         [
             yus.Word(text="scoober", confidence=0.850, start=DT.fromisoformat("2025-01-14T20:39:01"), duration=TD(seconds=0.6)),
-            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:39:01.6"), duration=TD(seconds=0.3)),
-            yus.Word(text="hat", confidence=0.880, start=DT.fromisoformat("2025-01-14T20:39:01.9"), duration=TD(seconds=0.3)),
+            yus.Word(text="to", confidence=0.737, start=DT.fromisoformat("2025-01-14T20:39:03.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="hat", confidence=0.880, start=DT.fromisoformat("2025-01-14T20:39:03.7"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -2183,24 +2153,24 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     transcript.add_group().add_interpretation(confidence=0.790).words.extend(
         [
             yus.Word(text="backhand", confidence=0.646, start=DT.fromisoformat("2025-01-14T20:43:16.4"), duration=TD(seconds=0.6)),
-            yus.Word(text="bobbled", confidence=0.840, start=DT.fromisoformat("2025-01-14T20:43:17"), duration=TD(seconds=0.6)),
-            yus.Word(text="and", confidence=0.435, start=DT.fromisoformat("2025-01-14T20:43:17.6"), duration=TD(seconds=0.3)),
-            yus.Word(text="dropped", confidence=0.963, start=DT.fromisoformat("2025-01-14T20:43:17.9"), duration=TD(seconds=0.54)),
-            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:43:18.44"), duration=TD(seconds=0.3)),
-            yus.Word(text="hat", confidence=0.880, start=DT.fromisoformat("2025-01-14T20:43:18.74"), duration=TD(seconds=0.3)),
-            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:43:19.04"), duration=TD(seconds=0.3)),
-            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:43:19.34"), duration=TD(seconds=0.3)),
+            yus.Word(text="bobbled", confidence=0.840, start=DT.fromisoformat("2025-01-14T20:43:18.75"), duration=TD(seconds=0.6)),
+            yus.Word(text="and", confidence=0.435, start=DT.fromisoformat("2025-01-14T20:43:19.35"), duration=TD(seconds=0.3)),
+            yus.Word(text="dropped", confidence=0.963, start=DT.fromisoformat("2025-01-14T20:43:19.65"), duration=TD(seconds=0.54)),
+            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:43:20.19"), duration=TD(seconds=0.3)),
+            yus.Word(text="hat", confidence=0.880, start=DT.fromisoformat("2025-01-14T20:43:20.49"), duration=TD(seconds=0.3)),
+            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:43:20.79"), duration=TD(seconds=0.3)),
+            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:43:21.09"), duration=TD(seconds=0.3)),
         ]
     )
 
     # "glasses picks up for white"
     transcript.add_group().add_interpretation(confidence=0.835).words.extend(
         [
-            yus.Word(text="glasses", confidence=0.714, start=DT.fromisoformat("2025-01-14T20:43:21"), duration=TD(seconds=0.6)),
-            yus.Word(text="picks", confidence=0.792, start=DT.fromisoformat("2025-01-14T20:43:21.6"), duration=TD(seconds=0.3)),
-            yus.Word(text="up", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:43:21.9"), duration=TD(seconds=0.3)),
-            yus.Word(text="for", confidence=0.857, start=DT.fromisoformat("2025-01-14T20:43:22.2"), duration=TD(seconds=0.3)),
-            yus.Word(text="white", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:43:22.5"), duration=TD(seconds=0.3)),
+            yus.Word(text="glasses", confidence=0.714, start=DT.fromisoformat("2025-01-14T20:43:21.6"), duration=TD(seconds=0.6)),
+            yus.Word(text="picks", confidence=0.792, start=DT.fromisoformat("2025-01-14T20:43:22.2"), duration=TD(seconds=0.3)),
+            yus.Word(text="up", confidence=0.925, start=DT.fromisoformat("2025-01-14T20:43:22.5"), duration=TD(seconds=0.3)),
+            yus.Word(text="for", confidence=0.857, start=DT.fromisoformat("2025-01-14T20:43:22.8"), duration=TD(seconds=0.3)),
+            yus.Word(text="white", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:43:23.1"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -2475,11 +2445,11 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
         [
             yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:45:18.5"), duration=TD(seconds=0.3)),
             yus.Word(text="huck", confidence=0.729, start=DT.fromisoformat("2025-01-14T20:45:18.8"), duration=TD(seconds=0.3)),
-            yus.Word(text="deed", confidence=0.841, start=DT.fromisoformat("2025-01-14T20:45:19.1"), duration=TD(seconds=0.3)),
-            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:45:19.4"), duration=TD(seconds=0.3)),
-            yus.Word(text="gloves", confidence=0.865, start=DT.fromisoformat("2025-01-14T20:45:19.7"), duration=TD(seconds=0.3)),
-            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:45:20.0"), duration=TD(seconds=0.3)),
-            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:45:20.3"), duration=TD(seconds=0.3)),
+            yus.Word(text="deed", confidence=0.841, start=DT.fromisoformat("2025-01-14T20:45:21.2"), duration=TD(seconds=0.3)),
+            yus.Word(text="by", confidence=0.883, start=DT.fromisoformat("2025-01-14T20:45:21.5"), duration=TD(seconds=0.3)),
+            yus.Word(text="gloves", confidence=0.865, start=DT.fromisoformat("2025-01-14T20:45:21.8"), duration=TD(seconds=0.3)),
+            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:45:22.1"), duration=TD(seconds=0.3)),
+            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:45:22.4"), duration=TD(seconds=0.3)),
         ]
     )
 
@@ -2682,10 +2652,10 @@ def build_transcript(game: yus.Game) -> yus.Transcript:
     transcript.add_group().add_interpretation(confidence=0.791).words.extend(
         [
             yus.Word(text="flick", confidence=0.712, start=DT.fromisoformat("2025-01-14T20:46:25.2"), duration=TD(seconds=0.3)),
-            yus.Word(text="huck", confidence=0.729, start=DT.fromisoformat("2025-01-14T20:46:25.5"), duration=TD(seconds=0.3)),
-            yus.Word(text="turf", confidence=0.846, start=DT.fromisoformat("2025-01-14T20:46:25.8"), duration=TD(seconds=0.3)),
-            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:46:26.1"), duration=TD(seconds=0.3)),
-            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:46:26.4"), duration=TD(seconds=0.3)),
+            yus.Word(text="huck", confidence=0.729, start=DT.fromisoformat("2025-01-14T20:46:26.3"), duration=TD(seconds=0.3)),
+            yus.Word(text="turf", confidence=0.846, start=DT.fromisoformat("2025-01-14T20:46:27.65"), duration=TD(seconds=0.3)),
+            yus.Word(text="no", confidence=0.886, start=DT.fromisoformat("2025-01-14T20:46:28.7"), duration=TD(seconds=0.3)),
+            yus.Word(text="score", confidence=0.784, start=DT.fromisoformat("2025-01-14T20:46:29.0"), duration=TD(seconds=0.3)),
         ]
     )
     # """
@@ -2757,22 +2727,22 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         #      time  tm  player            thr dir receiver         cmp  scr  wal  net
         throw( 42.7, TW, "pikachu",        BH, ZZ, "glasses",        Y,   N,   N,   N), # picked up by pikachu; backhand to glasses
         throw( 45.1, TW, "glasses",        SC, ZZ, "tristan",        Y,   N,   N,   N), # scoober to tristan
-        throw( 49.8, TW, "tristan",        BH, ZZ, "close crop",     Y,   N,   N,   N), # backhand to close crop
+        throw( 51.8, TW, "tristan",        BH, ZZ, "close crop",     Y,   N,   N,   N), # backhand to close crop
         throw( 55.1, TW, "close crop",     BH, DP, "emily",          Y,   N,   N,   N), # backhand dump to emily
-        throw( 57.1, TW, "emily",          BH, SW, "glasses",        Y,   N,   N,   N), # backhand swing to glasses
-        throw( 60.0, TW, "glasses",        FL, ZZ, "kaia",           N,   N,   N,   N), # flick to kaia deed by somebody
+        throw( 58.8, TW, "emily",          BH, SW, "glasses",        Y,   N,   N,   N), # backhand swing to glasses
+        throw( 63.5, TW, "glasses",        FL, ZZ, "kaia",           N,   N,   N,   N), # flick to kaia deed by somebody
 
-        defns(61.35, TB, ZZ, N),                                                        # deed by somebody on dark
+        defns(64.85, TB, ZZ, N),                                                        # deed by somebody on dark
         throw( 72.0, TB, "blue",           BH, SW, "red stripe",     Y,   N,   N,   N), # picked up by blue on dark; backhand swing to red stripe
-        throw( 74.0, TB, "red stripe",     BH, ZZ, "yellow border",  Y,   N,   N,   N), # backhand to yellow border
-        throw( 83.1, TB, "yellow border",  BH, ZZ, "federbush",      Y,   N,   N,   N), # backhand federbush
-        throw( 84.6, TB, "federbush",      ZZ, ZZ, "naked",          Y,   Y,   N,   N), # to naked for a score
+        throw(75.45, TB, "red stripe",     BH, ZZ, "yellow border",  Y,   N,   N,   N), # backhand to yellow border
+        throw( 83.1, TB, "yellow border",  BH, ZZ, "federbusch",     Y,   N,   N,   N), # backhand federbusch
+        throw( 87.9, TB, "federbusch",     ZZ, ZZ, "naked",          Y,   Y,   N,   N), # to naked for a score
 
-        throw( 90.4, TW, "pikachu",        FL, ZZ, "close crop",     Y,   N,   N,   N), # picked up by pikachu; flick to close crop
-        throw( 92.3, TW, "close crop",     BH, ZZ, "joe",            Y,   N,   N,   N), # backhand to joe
+        throw( 91.4, TW, "pikachu",        FL, ZZ, "close crop",     Y,   N,   N,   N), # picked up by pikachu; flick to close crop
+        throw( 93.9, TW, "close crop",     BH, ZZ, "joe",            Y,   N,   N,   N), # backhand to joe
         throw( 97.2, TW, "joe",            FL, HK, ZZ,               N,   N,   Y,   N), # joe big flick huck off the wall no score
 
-        throw(108.8, TB, "federbush",      BH, SW, ZZ,               Y,   N,   N,   N), # picked up by federbush for dark; backhand swing to somebody
+        throw(108.8, TB, "federbusch",     BH, SW, ZZ,               Y,   N,   N,   N), # picked up by federbusch for dark; backhand swing to somebody
         throw(115.0, TB, ZZ,               BH, HK, ZZ,               N,   N,   N,   N), # backhand huck deed by stephen butler
 
         defns(115.9, TW, "stephen butler", N),                                          # deed by stephen butler
@@ -2799,11 +2769,11 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(194.1, TW, "tristan",        BH, ZZ, "glasses",        Y,   N,   N,   N), # backhand to glasses
         throw(198.2, TW, "glasses",        FL, ZZ, "kaia",           N,   N,   N,   N), # flick to kaia dropped
 
-        throw(205.6, TB, "gloves",         HM, ZZ, "george",         Y,   Y,   N,   N), # gloves picks it up for dark; hammer put to the end zone caught by george for a score
+        throw(205.6, TB, "gloves",         HM, HK, "george",         Y,   Y,   N,   N), # gloves picks it up for dark; hammer put to the end zone caught by george for a score
 
-        throw(219.8, TW, "glasses",        FL, HK, ZZ,               N,   N,   N,   N), # glasses picks it up for white; checked in; flick huck deed by federbush
+        throw(219.8, TW, "glasses",        FL, HK, ZZ,               N,   N,   N,   N), # glasses picks it up for white; checked in; flick huck deed by federbusch
 
-        defns(222.0, TB, "federbush", N),                                          # deed by federbush
+        defns(222.0, TB, "federbusch", N),                                         # deed by federbusch
         throw(226.5, TB, "bush",           FL, ZZ, "yellow",         Y,   N,   N,   N), # bush picks it up; flick to yellow
         throw(228.5, TB, "yellow",         BH, ZZ, "bush",           Y,   N,   N,   N), # backhand to bush
         throw(230.8, TB, "bush",           FL, HK, "blue",           Y,   Y,   N,   N), # flick huck caught by blue in the end zone for a score
@@ -2821,7 +2791,7 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(279.0, TB, "hat",            BH, ZZ, "bush",           Y,   N,   N,   N), # backhand to bush
         throw(282.0, TB, "bush",           FL, SW, "naked",          Y,   N,   N,   N), # flick swing to naked
         throw(287.5, TB, "naked",          BH, ZZ, "turtle",         Y,   N,   N,   N), # backhand to turtle
-        throw(289.8, TB, "turtle",         BH, ZZ, ZZ,               Y,   Y,   N,   N), # backhand in the end zone caught by
+        throw(289.8, TB, "turtle",         BH, ZZ, "hat",            Y,   Y,   N,   N), # backhand in the end zone caught by hat
 
         throw(300.8, TW, "joe",            FL, HK, "pikachu",        Y,   Y,   N,   N), # joe picks it up for white; flick huck caught by pikachu for a score
 
@@ -2872,7 +2842,7 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(457.8, TW, "tristan",        BH, ZZ, "blondie",        Y,   N,   N,   N), # backhand to blondie
         throw(459.8, TW, "blondie",        SC, ZZ, ZZ,               Y,   Y,   N,   N), # scoober in the end zone for a score to somebody
 
-        throw(468.0, TB, "george",         SC, SW, "bluey",          Y,   N,   N,   N), # picked up by george; backhand to bluey
+        throw(468.0, TB, "george",         BH, ZZ, "bluey",          Y,   N,   N,   N), # picked up by george; backhand to bluey
         throw(471.3, TB, "bluey",          BH, HK, ZZ,               N,   N,   N,   N), # backhand huck turfed
 
         throw(485.1, TW, "tristan",        BH, ZZ, "close crop",     Y,   N,   N,   N),  # tristan backhand to close crop
@@ -2893,8 +2863,8 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(537.6, TW, "joe",            FL, ZZ, "pikachu",        Y,   N,   N,   N),  # flick to pikachu
         throw(541.2, TW, "pikachu",        BH, ZZ, "close crop",     Y,   N,   N,   N),  # backhand to close crop
         throw(543.0, TW, "close crop",     BH, ZZ, "kaia",           Y,   N,   N,   N),  # backhand to kaia
-        throw(547.0, TW, "kaia",           FL, SW, "close crop",     Y,   N,   N,   N),  # swing flick to close crop swing
-        throw(549.0, TW, "close crop",     BH, ZZ, "pikachu",        Y,   N,   N,   N),  # backhand to pikachu
+        throw(547.0, TW, "kaia",           FL, SW, "close crop",     Y,   N,   N,   N),  # swing flick to close crop
+        throw(549.0, TW, "close crop",     BH, SW, "pikachu",        Y,   N,   N,   N),  # swing backhand to pikachu
         throw(551.5, TW, "pikachu",        BH, ZZ, "stephen butler", Y,   Y,   N,   N),  # backhand to stephen butler for a score
 
         throw(565.8, TB, "hat",            BH, ZZ, "turtle",         Y,   N,   N,   N),  # hat checks in for dark; backhand to turtle
@@ -2919,7 +2889,7 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(632.2, TB, ZZ,               BH, ZZ, ZZ,               N,   N,   N,   N),  # backhand deed by the kid
 
         defns(632.8, TW, "the kid", N),                                              # deed by the kid
-        throw(642.9, TW, "the kid",        FL, ZZ, "emily",          Y,   N,   N,   N),  # flick to emily
+        throw(642.9, TW, "kid",            FL, ZZ, "emily",          Y,   N,   N,   N),  # kid picks it up for white; checks it in; flick to emily
         throw(646.4, TW, "emily",          FL, ZZ, "blondie",        Y,   N,   N,   N),  # flick to blondie
         throw(650.2, TW, "blondie",        BL, ZZ, ZZ,               Y,   N,   N,   N),  # blade in the end zone nope, not in the end zone, caught by somebody
         throw(656.0, TW, ZZ,               ZZ, DP, "blondie",        Y,   N,   N,   N),  # then dump to blondie
@@ -2956,8 +2926,8 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(772.0, TW, "glasses",        FL, ZZ, "tristan",        Y,   N,   N,   N),  # glasses picks up for white, flick to tristan
         throw(774.0, TW, "tristan",        BH, ZZ, "kaia",           Y,   N,   N,   N),  # backhand to kaia
         throw(779.2, TW, "kaia",           FL, DP, "glasses",        Y,   N,   N,   N),  # flick dump to glasses
-        throw(782.3, TW, "glasses",        FL, ZZ, "stephen butler", Y,   N,   N,   N),  # flick to stephen butler
-        throw(784.8, TW, "stephen butler", FL, HK, "close crop",     Y,   Y,   N,   N),  # flick put huck close crop in the end zone for a score
+        throw(782.3, TW, "glasses",        FL, ZZ, "stephen",        Y,   N,   N,   N),  # flick to stephen
+        throw(784.8, TW, "stephen",        FL, HK, "close crop",     Y,   Y,   N,   N),  # flick put huck close crop in the end zone for a score
 
         throw(797.5, TB, "naked",          BH, ZZ, ZZ,               Y,   N,   N,   N),  # naked picks up for dark, backhand to somebody
         throw(801.7, TB, ZZ,               BH, DP, "naked",          Y,   N,   N,   N),  # backhand dump to naked
@@ -2979,7 +2949,7 @@ def build_raw_stream(transcript: yus.Transcript) -> yus.EventStream:
         throw(883.4, TW, "blondie",        BH, ZZ, "stephen",        Y,   N,   N,   N),  # backhand to stephen
         throw(885.5, TW, "stephen",        FL, HK, ZZ,               N,   N,   N,   N),  # flick huck deed by gloves
 
-        defns(886.1, TB, "gloves", N),                                              # deed by gloves
+        defns(888.2, TB, "gloves", N),                                              # deed by gloves
         throw(895.1, TB, "gloves",         BH, SW, "leg stripe",     Y,   N,   N,   N),  # picked up by gloves for black, backhand swing to leg stripe
         throw(897.3, TB, "leg stripe",     BH, ZZ, ZZ,               Y,   N,   N,   N),  # backhand to I don't know
         throw(900.0, TB, ZZ,               BH, ZZ, "bush",           Y,   N,   N,   N),  # backhand to bush
@@ -3018,7 +2988,7 @@ def build_unified_stream(raw: yus.EventStream) -> yus.EventStream:
         "Serayan Knappe-Butler": {"kid", "the kid"},
         "Stephen Butler": {"stephen", "stephen butler"},
         "Tristan Weber": {"tristan"},
-        "Adam Federbusch": {"bush", "federbush"},
+        "Adam Federbusch": {"bush", "federbusch"},
         "Christopher Baines": {"hat"},
         "yellow sleeve": {"yellow", "yellow border", "yellow fringe", "yellow stripe", "yellow stripe yellow fringe"},
         "leg stripe": {"leg stripes", "pants stripe", "purple leg stripe"},

@@ -15,14 +15,37 @@ dependencies = [
     "google-cloud-speech>=2.30.0",
     "faster-whisper>=1.1.0",
     "pandas>=2.2.3",
+    "starlette>=0.40",
+    "uvicorn[standard]>=0.30",
+    "a2wsgi>=1.10",
+    "websockets>=13",
 ]
+
+[project.optional-dependencies]
+# Apple Silicon GPU backend for yus-transcribe; mlx only ships wheels for macOS 14+ on arm64.
+mlx = ["mlx-whisper>=0.4.2; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [project.scripts]
 yus-transcribe = "yus.processing.transcription.transcribe:main"
+yus-live-transcribe = "yus.processing.transcription.live:main"
+yus-events = "yus.processing.event_extraction.cli:main"
+yus-score = "yus.processing.evaluation:main"
+yus-stats = "yus.processing.stats.cli:main"
+yus-serve = "yus.web.server:main"
+yus-replay = "yus.web.replay:main"
+yus-game = "yus.game_cli:main"
 
 [tool.uv]
 package = true
 
+[tool.setuptools.packages.find]
+include = ["yus*"]  # not games/ or other folders yus-serve and yus-game write into the checkout
+
+[tool.setuptools.package-data]
+"yus.web" = ["static/*"]  # the server's pages and scripts, also in a non-editable install
+
 [tool.ruff]
 line-length = 180
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "C90"]

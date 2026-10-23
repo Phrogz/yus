@@ -8,3 +8,6 @@
 .DS_Store
 __pycache__/
 *.egg-info/
+
+# yus-serve's default game directory (audio, transcripts, events)
+/games/

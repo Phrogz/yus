@@ -27,7 +27,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:31:22.800000",
+      "when": "2025-01-14T20:31:24.800000",
       "team": "white",
       "player": "tristan",
       "type": "backhand",
@@ -53,7 +53,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:31:30.100000",
+      "when": "2025-01-14T20:31:31.800000",
       "team": "white",
       "player": "emily",
       "type": "backhand",
@@ -66,7 +66,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:31:33",
+      "when": "2025-01-14T20:31:36.500000",
       "team": "white",
       "player": "glasses",
       "type": "flick",
@@ -79,7 +79,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:31:34.350000",
+      "when": "2025-01-14T20:31:37.850000",
       "team": "black",
       "player": null,
       "intercepted": false,
@@ -99,7 +99,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:31:47",
+      "when": "2025-01-14T20:31:48.450000",
       "team": "black",
       "player": "red stripe",
       "type": "backhand",
@@ -117,7 +117,7 @@
       "player": "yellow border",
       "type": "backhand",
       "direction": null,
-      "receiver": "federbush",
+      "receiver": "federbusch",
       "completed": true,
       "scored": false,
       "hit_wall": false,
@@ -125,9 +125,9 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:31:57.600000",
+      "when": "2025-01-14T20:32:00.900000",
       "team": "black",
-      "player": "federbush",
+      "player": "federbusch",
       "type": null,
       "direction": null,
       "receiver": "naked",
@@ -138,7 +138,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:32:03.400000",
+      "when": "2025-01-14T20:32:04.400000",
       "team": "white",
       "player": "pikachu",
       "type": "flick",
@@ -151,7 +151,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:32:05.300000",
+      "when": "2025-01-14T20:32:06.900000",
       "team": "white",
       "player": "close crop",
       "type": "backhand",
@@ -179,7 +179,7 @@
     {
       "when": "2025-01-14T20:32:21.800000",
       "team": "black",
-      "player": "federbush",
+      "player": "federbusch",
       "type": "backhand",
       "direction": "swing",
       "receiver": null,
@@ -448,7 +448,7 @@
       "team": "black",
       "player": "gloves",
       "type": "hammer",
-      "direction": null,
+      "direction": "huck",
       "receiver": "george",
       "completed": true,
       "scored": true,
@@ -472,7 +472,7 @@
     {
       "when": "2025-01-14T20:34:15",
       "team": "black",
-      "player": "federbush",
+      "player": "federbusch",
       "intercepted": false,
       "__type__": "ultimate.Defense"
     },
@@ -677,7 +677,7 @@
       "player": "turtle",
       "type": "backhand",
       "direction": null,
-      "receiver": null,
+      "receiver": "hat",
       "completed": true,
       "scored": true,
       "hit_wall": false,
@@ -1184,8 +1184,8 @@
       "when": "2025-01-14T20:38:21",
       "team": "black",
       "player": "george",
-      "type": "scoober",
-      "direction": "swing",
+      "type": "backhand",
+      "direction": null,
       "receiver": "bluey",
       "completed": true,
       "scored": false,
@@ -1432,7 +1432,7 @@
       "team": "white",
       "player": "close crop",
       "type": "backhand",
-      "direction": null,
+      "direction": "swing",
       "receiver": "pikachu",
       "completed": true,
       "scored": false,
@@ -1697,7 +1697,7 @@
     {
       "when": "2025-01-14T20:41:15.900000",
       "team": "white",
-      "player": "the kid",
+      "player": "kid",
       "type": "flick",
       "direction": null,
       "receiver": "emily",
@@ -2103,7 +2103,7 @@
       "player": "glasses",
       "type": "flick",
       "direction": null,
-      "receiver": "stephen butler",
+      "receiver": "stephen",
       "completed": true,
       "scored": false,
       "hit_wall": false,
@@ -2113,7 +2113,7 @@
     {
       "when": "2025-01-14T20:43:37.800000",
       "team": "white",
-      "player": "stephen butler",
+      "player": "stephen",
       "type": "flick",
       "direction": "huck",
       "receiver": "close crop",
@@ -2332,7 +2332,7 @@
       "__type__": "indoor.Throw"
     },
     {
-      "when": "2025-01-14T20:45:19.100000",
+      "when": "2025-01-14T20:45:21.200000",
       "team": "black",
       "player": "gloves",
       "intercepted": false,

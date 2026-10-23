@@ -14,10 +14,13 @@ Convert spoken play-by-play commentary like:
 Into structured events:
 
 ```python
-Throw(when=..., team="white", player="pikachu", type=BACKHAND, receiver="glasses", completed=True, scored=False)
-Throw(when=..., team="white", player="glasses", type=FLICK, receiver="kaia", completed=False, scored=False)
-Defense(when=..., team="dark", player=None, intercepted=False)
+indoor.Throw(when=..., team="white", player="pikachu", type=BACKHAND, direction=None, receiver="glasses", completed=True, scored=False)
+indoor.Throw(when=..., team="white", player="glasses", type=FLICK, direction=None, receiver="kaia", completed=False, scored=False)
+ultimate.Defense(when=..., team="black", player=None, intercepted=False)
 ```
+
+Teams are named as in the ground truth event stream: `"white"` and `"black"` (the commentator also calls black "dark").
+Player names are recorded as spoken (`"pikachu"`, `"close crop"`, `"federbusch"`); resolving them to roster names is a later unification step.
 
 ---
 
@@ -43,23 +46,22 @@ Defense(when=..., team="dark", player=None, intercepted=False)
 
 ### Input: Transcript JSON
 
-The transcript JSON contains:
+The transcript JSON (e.g. [gruindoor_20250114T2030-transcript.json](../tests/data/gruindoor_20250114T2030-transcript.json)) contains:
 
 ```json
 {
-  "game": null,
-  "commentator": null,
+  "commentator": "Gavin Kistner",
   "groups": [
     {
       "interpretations": [
         {
-          "confidence": 0.75,
           "words": [
-            { "text": "picked", "confidence": 0.9, "start": "2025-01-14T20:31:12.8", "duration": "PT0.3S" },
-            { "text": "up", "confidence": 0.92, "start": "2025-01-14T20:31:13.1", "duration": "PT0.3S" },
-            { "text": "by", "confidence": 0.88, "start": "2025-01-14T20:31:13.4", "duration": "PT0.3S" },
-            { "text": "pikachu", "confidence": 0.92, "start": "2025-01-14T20:31:13.7", "duration": "PT0.9S" }
-          ]
+            { "text": "picked", "confidence": 0.906, "start": "2025-01-14T20:31:12.800000", "duration": "PT0.3S" },
+            { "text": "up", "confidence": 0.925, "start": "2025-01-14T20:31:13.100000", "duration": "PT0.3S" },
+            { "text": "by", "confidence": 0.883, "start": "2025-01-14T20:31:13.400000", "duration": "PT0.3S" },
+            { "text": "pikachu", "confidence": 0.925, "start": "2025-01-14T20:31:13.700000", "duration": "PT0.9S" }
+          ],
+          "confidence": 0.91
         }
       ]
     }
@@ -67,16 +69,22 @@ The transcript JSON contains:
 }
 ```
 
+The back-reference to the game is not serialized, so there is no `"game"` key.
+
 ### Output: Event Types (Indoor Ultimate)
 
 From [yus/sports/ultimate/__init__.py](../yus/sports/ultimate/__init__.py) and [yus/sports/ultimate/indoor.py](../yus/sports/ultimate/indoor.py):
 
-| Event Type    | Key Fields                                                                          |
-| ------------- | ----------------------------------------------------------------------------------- |
-| `Throw`       | when, team, player, type, direction, receiver, completed, scored, hit_wall, hit_net |
-| `Defense`     | when, team, player, intercepted                                                     |
-| `Substitution`| when, team, player, sub_type (SUB_ON/SUB_OFF)                                       |
-| `Infraction`  | when, team, player (details TBD)                                                    |
+| Event Type (`"__type__"`) | Key Fields                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `indoor.Throw`            | when, team, player, type, direction, receiver, completed, scored, hit_wall, hit_net |
+| `ultimate.Defense`        | when, team, player, intercepted                                                     |
+| `ultimate.Substitution`   | when, team, player, sub_type (`"sub_on"`/`"sub_off"`)                               |
+| `ultimate.Infraction`     | when, team, player (details TBD)                                                    |
+
+For a throw, `type` is the throw type (`"flick"`, `"backhand"`, `"hammer"`, `"scoober"`, `"blade"`, `"chicken_wing"`, or null)
+and `direction` is `"dump"`, `"swing"`, `"up_line"`, `"cross_field"`, `"huck"`, or null.
+The event class is written separately, as the `"__type__"` tag (see [Output Format](#phase-4-output-format)).
 
 ---
 
@@ -145,9 +153,9 @@ CONTEXT you must track:
 
 EVENT TYPES to emit:
 
-1. Throw: `{"type": "Throw", "team": "...", "player": "...", "throw_type": "flick|backhand|hammer|scoober|blade|chicken_wing", "direction": "dump|swing|up_line|cross_field|huck", "receiver": "...", "completed": true/false, "scored": true/false, "hit_wall": true/false, "hit_net": true/false}`
-2. Defense: `{"type": "Defense", "team": "...", "player": "...", "intercepted": true/false}`
-3. Substitution: `{"type": "Substitution", "team": "...", "player": "...", "sub_type": "on|off"}`
+1. Throw: `{"__type__": "indoor.Throw", "team": "white|black", "player": "...", "type": "flick|backhand|hammer|scoober|blade|chicken_wing|null", "direction": "dump|swing|up_line|cross_field|huck|null", "receiver": "...", "completed": true/false, "scored": true/false, "hit_wall": true/false, "hit_net": true/false}`
+2. Defense: `{"__type__": "ultimate.Defense", "team": "white|black", "player": "...", "intercepted": true/false}`
+3. Substitution: `{"__type__": "ultimate.Substitution", "team": "white|black", "player": "...", "sub_type": "sub_on|sub_off"}`
 
 RULES:
 
@@ -156,9 +164,10 @@ RULES:
 - "for a score" or "end zone" with catch → scored=true
 - "dropped" or "turf" or "turfed" → completed=false
 - "off the wall" or "off the glass" → hit_wall=true
-- Team is inferred from player name or context; "for white", "on dark" indicates team
+- Team is inferred from player name or context; "for white", "on dark" indicates team ("dark" is team "black")
+- Write player names as spoken, e.g. "stephen" or "stephen butler"
 
-For each transcript group, output ONLY a JSON array of events. Include a "timestamp" field from the first word.
+For each transcript group, output ONLY a JSON array of events. Include a "when" field: the start time of the word that begins the event.
 ```
 
 ### Phase 2: Core Script Implementation
@@ -219,7 +228,7 @@ __Key Options:__
 │        - Current game state (possession, last player)                     │
 │     b. Call local LLM                                                     │
 │     c. Parse JSON response into Event objects                             │
-│     d. Validate and fix player names against team rosters                 │
+│     d. Keep player names as spoken (unification resolves them later)      │
 │     e. Update game state based on events                                  │
 │                                                                           │
 │  4. Assemble all events into yus.EventStream                              │
@@ -238,11 +247,15 @@ __Excluded Back-References__ (via `exclude=True` on fields):
 - `Transcript.game` – back-reference to parent Game
 - `TranscriptGroup.transcript` – back-reference to parent Transcript
 - `Interpretation.group` – back-reference to parent TranscriptGroup
+- `EventStream.game` and `EventStream.transcript` – back-references to the Game and source Transcript
 
 __Restored on Load__ (via `model_post_init` hooks):
 
 - `Transcript.model_post_init()` restores `group.transcript` for all groups
 - `TranscriptGroup.model_post_init()` restores `interp.group` for all interpretations
+
+__Event Subclasses__: `EventStream` writes each event with all of its subclass's fields plus a `"__type__"` tag
+(e.g. `"indoor.Throw"`), and rebuilds that subclass on load; the module defining it must have been imported.
 
 __Loading a Transcript:__
 
@@ -266,36 +279,37 @@ path.write_text(json.dumps(event_json, indent=2))
 
 ### Phase 4: Output Format
 
-The output will be a JSON-serialized `EventStream`:
+The output will be a JSON-serialized `EventStream`, in the same format as
+[gruindoor_20250114T2030-eventstream.json](../tests/data/gruindoor_20250114T2030-eventstream.json):
 
 ```json
 {
-  "game": null,
-  "transcript": null,
   "events": [
     {
-      "type": "Throw",
-      "when": "2025-01-14T20:31:15.7",
+      "when": "2025-01-14T20:31:15.700000",
       "team": "white",
       "player": "pikachu",
-      "throw_type": "backhand",
+      "type": "backhand",
       "direction": null,
       "receiver": "glasses",
       "completed": true,
       "scored": false,
       "hit_wall": false,
-      "hit_net": false
+      "hit_net": false,
+      "__type__": "indoor.Throw"
     },
     {
-      "type": "Defense",
-      "when": "2025-01-14T20:31:34.35",
-      "team": "dark",
+      "when": "2025-01-14T20:31:37.850000",
+      "team": "black",
       "player": null,
-      "intercepted": false
+      "intercepted": false,
+      "__type__": "ultimate.Defense"
     }
   ]
 }
 ```
+
+`"type"` is the throw type; the event class is in `"__type__"`. The game and transcript back-references are not serialized.
 
 ---
 
@@ -303,7 +317,8 @@ The output will be a JSON-serialized `EventStream`:
 
 | Challenge                            | Mitigation                                              |
 | ------------------------------------ | ------------------------------------------------------- |
-| Player names not in team roster      | Fuzzy match to roster; flag unresolved for review       |
+| Player names not in team roster      | Keep as spoken; event unification's PlayerResolver maps |
+|                                      | them to players and lists unresolved names for review   |
 | Context loss across groups           | Include sliding window of N prior groups in prompt      |
 | Ambiguous team attribution           | Track possession state; require explicit "for dark" etc |
 | LLM outputs malformed JSON           | Use JSON repair library; retry with stricter prompt     |

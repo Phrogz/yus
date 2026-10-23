@@ -19,7 +19,8 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
     say the association in your recording it, e.g. "Oh, red shorts is Kaia".
 
 * **Transcription**: There's an implementation of a transcription pipeline using OpenAI's Whisper model.
-  It's not fast, but it works reasonably well on the sample commentary we have.
+  It works reasonably well on the sample commentary we have, after the game or live, a few seconds behind the speaker
+  ([live_transcription.md](live_transcription.md)).
   Eventually, we probably want to train custom models that are fine-tuned on commentary for specific sports.
 
   Sample audio and video files with commentary are available in [this Google Drive folder][0].
@@ -36,16 +37,22 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
   _huck into the end zone, off the wall, caught by Joe for the score."_
 
   * Test transcriptions, and the expected events from them are available in the `tests/data` directory.
+  * Rules in `yus/processing/event_extraction` already read one commentator's throws, Ds, substitutions and simple
+    corrections ([extraction.md](extraction.md)); other people's phrasings are where they fail.
 
 * **Event Unification**: Given two event streams from two commentators, we need logic to merge them, figure out how to
   unify "Pikachu" and "Matt" and "Whitlock", resolve cases where one commentator did not see who caught it but the other
   did, merging two events that describe the same action, etc.
 
   * Test event streams and their expected unified output will be in the `tests/data` directory.
-    _(Currently there's only one test event stream, where unification simply assigns the right names to some players.)_
+    _(Both parts are built in `yus/processing/event_unification`: `PlayerResolver` maps names and per-game descriptions
+    to players, and `merge_streams`/`LiveMerger` merge several commentators' streams ([merging.md](merging.md)). Merging
+    has been tested only on synthetic second commentators and on one recording streamed twice: a real second
+    commentator's recording of a game would help.)_
 
 * **Stats**: Given a stream of events with timestamps, player and team names, throw types, outcomes, brainstorm on what
-  sorts of stats you'd like to see and play with.
+  sorts of stats you'd like to see and play with. Box scores, points, possessions, connections, and (from substitutions)
+  playing time, plus-minus and lines exist ([stats.md](stats.md)).
   * Stat ideas are currently captured on the [YUS Stats][5] issue.
 
 * **Visualizations**: Making pretty web pages that show the stats in a useful way.
@@ -70,11 +77,22 @@ cd yus
 # Install (just for this project) the Python and packages we need
 uv venv
 source .venv/bin/activate
-uv sync
+uv sync                 # on an Apple Silicon Mac: uv sync --extra mlx (Whisper on the GPU)
 
 # Open the workspace in VS Code
 code yus.code-workspace
 ```
+
+Before a pull request, run the tests and the linter:
+
+```bash
+uv run pytest -q                          # about 45 s
+YUS_SLOW_TESTS=1 uv run pytest -q         # also the tests that need Whisper, a GPU, the game's audio or Chrome
+uv run ruff check yus tests && uv run ruff format --check yus tests
+```
+
+The slow tests look for the game's audio (`20250114T2030-0700.ogg` from the Drive folder) in `$YUS_DATA/drive/`
+(default `~/Documents/Personal/yus-data/drive/`), and skip without it.
 
 Once you've done work that you feel is good (or ready for discussion), push your work to GitHub and
 [create a Pull Request from your fork][4].

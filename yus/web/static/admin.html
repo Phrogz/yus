@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>YUS Game Admin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header><a href="/">YUS</a><span id="summary" class="muted"></span></header>
+  <main>
+    <h1>Game admin</h1>
+    <p id="message" class="muted" role="status" aria-live="polite"></p>
+    <section>
+      <h2>Unresolved names</h2>
+      <p class="muted">Names commentators used that are not roster players. Pick who each one is; earlier events are fixed too.</p>
+      <table>
+        <thead><tr><th>Team</th><th>Name</th><th>Mentions</th><th>Player</th><th></th></tr></thead>
+        <tbody id="unresolved"></tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Describe a player</h2>
+      <form id="describe">
+        <label>Team <select id="d-team" required></select></label>
+        <label>Descriptions (comma-separated) <input id="d-descriptions" required placeholder="red shorts, the kid"></label>
+        <label>Player <select id="d-player"><option value="">Unknown for now</option></select></label>
+        <label>Label for an unknown player (optional) <input id="d-label" placeholder="yellow sleeve"></label>
+        <label>Only for commentator <select id="d-commentator"><option value="">Everyone</option></select></label>
+        <button class="primary" type="submit">Record</button>
+      </form>
+    </section>
+    <section>
+      <h2>Commentators</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Following</th><th>Status</th><th>Groups</th><th>Audio</th></tr></thead>
+        <tbody id="commentators"></tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Descriptions in effect</h2>
+      <ul id="descriptions"></ul>
+    </section>
+    <section>
+      <h2>End of game</h2>
+      <p class="muted">Commits every commentator's last words, makes every event final, and saves the game.</p>
+      <button id="finish" class="danger" type="button">Finish game</button>
+    </section>
+  </main>
+  <script src="/static/admin.js"></script>
+</body>
+</html>

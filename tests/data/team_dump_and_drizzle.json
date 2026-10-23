@@ -3,19 +3,16 @@
   "players": {
     "Matt Whitlock": ["Pikachu"],
     "Kaia Mann": {
-      "mondegreens": ["takaya"]
+      "mondegreens": ["takaya", "kaya", "kaeya"]
     },
     "Emily Kraus": [],
     "Alexis Rosas": [],
     "Ari Weissman": [],
-    "Ben Kishter": {
-      "mondegreens": ["close crop", "short crop", "short crown"]
-    },
+    "Ben Kishter": [],
     "Drew Rasmussen": [],
     "Joe Oaks": [],
-    "Serayan Knappe-Butler": {"mondegreens": ["the kid"]},
-    "Stephen Butler": {"mondegreens": ["Steven Butler"]},
+    "Serayan Knappe-Butler": [],
+    "Stephen Butler": {"mondegreens": ["Steven Butler", "steven"]},
     "Tristan Weber": []
-  },
-  "replacements": {}
+  }
 }
