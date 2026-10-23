@@ -22,7 +22,8 @@ yus-events game.transcript.json --team white.json --team dark.json [-o game.even
 yus-score game.events.json [--gt truth.json] [--team T.json ...] [--resolve | --descriptions D.json] [--start T] [--stop T] [--shift FROM TO] [-v] [--json]
 ```
 
-- `yus-events` writes `<transcript stem>.events.json` and prints a summary: counts, goals per team, and spoken identifications.
+- `yus-events` writes `game.events.json` for `game.transcript.json` (else `<transcript stem>.events.json`) and prints a
+  summary: counts, goals per team, and spoken identifications.
   Give one `--team` per team, or none: without them it assumes two teams called `white`/`light` and `black`/`dark` (a single
   `--team` is an error). `--timeout` finalizes a throw after that many seconds of silence, as live use would (see below).
 - `yus-score` compares a predicted stream with a ground-truth stream. The default ground truth is the bundled game,

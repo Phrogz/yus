@@ -317,7 +317,7 @@ def test_cli(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]):
     transcript.write_text(HAND_MADE.read_text())
     teams = ["--team", str(DATA / "team_dump_and_drizzle.json"), "--team", str(DATA / "team_category_5.json")]
     assert cli.main([str(transcript), *teams]) == 0
-    written = yus.EventStream.model_validate_json((tmp_path / "game.transcript.events.json").read_text())
+    written = yus.EventStream.model_validate_json((tmp_path / "game.events.json").read_text())  # not game.transcript.events.json
     assert len(written.events) == 200 and isinstance(written.events[0], indoor.Throw)
     out = capsys.readouterr().out
     assert "200 events: 191 throws (21 incomplete), 9 defenses\nGoals: white 14, dark 10\n" in out

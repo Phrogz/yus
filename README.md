@@ -144,7 +144,7 @@ An M3 Pro keeps up with two commentators, without headroom for a third ([results
 
 ```bash
 yus-transcribe game.ogg --team white.json --team dark.json                         # -> game.transcript.json
-yus-events game.transcript.json --team white.json --team dark.json -o game.events.json
+yus-events game.transcript.json --team white.json --team dark.json                 # -> game.events.json
 yus-stats game.events.json --team white.json --team dark.json --descriptions game-descriptions.json
 ```
 
