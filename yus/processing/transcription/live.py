@@ -67,6 +67,7 @@ class DecodePass(pydantic.BaseModel):
     words: int = pydantic.Field(0, description="Words hypothesized after the commit point.")
     committed: int = pydantic.Field(0, description="Words committed by this pass.")
     failed: bool = pydantic.Field(False, description="Heard no words where earlier decodes had (a dropped loop, or only noise), so ignored.")
+    skipped: bool = pydantic.Field(False, description="Not decoded: nothing waited to be committed and `speech` heard none in the new audio.")
 
 
 def _key(word: TimedWord) -> str:
@@ -211,7 +212,8 @@ class LiveTranscriber:
     a group closes. Word times are `start` plus their offset in the stream, as naive local times like yus-transcribe's.
 
     `transcribe(audio, prompt)` decodes 16 kHz mono float32 audio into Whisper segments (see `Segment`); the default loads a Whisper
-    `model` with `backend` ("auto", "mlx" or "faster-whisper"; see `load_whisper`).
+    `model` with `backend` ("auto", "mlx" or "faster-whisper"; see `load_whisper`). With `speech(audio) -> bool` (e.g. `SileroSpeech`),
+    a decode is skipped when nothing waits to be committed and it hears no speech in the new audio.
     """
 
     def __init__(
@@ -228,18 +230,18 @@ class LiveTranscriber:
         force_s: float = 4.0,
         transcribe: Transcribe | None = None,
         gap_s: float = 0.6,
+        speech: Callable[[np.ndarray], bool] | None = None,
     ) -> None:
-        self._step = int((window_s - force_s - period_s) * SAMPLE_RATE)  # samples per decode when a backlog is decoded in steps
-        if not (0 < period_s and self._step >= 1 and window_s <= MAX_WINDOW_S):
-            raise ValueError(
-                f"need 0 < period_s, force_s + period_s < window_s and window_s <= {MAX_WINDOW_S:g} (one Whisper window), "
-                f"got period_s={period_s}, force_s={force_s}, window_s={window_s}"
-            )
+        if window_s > MAX_WINDOW_S:
+            raise ValueError(f"need window_s <= {MAX_WINDOW_S:g} (one Whisper window), got {window_s}")
+        self.window_s, self.hold_s, self.force_s, self.gap_s = window_s, hold_s, force_s, gap_s
+        self.period_s = period_s
+        self._promised = 0.0  # the period `horizon` assumed at the last decode (none yet): the next decode waits at least this long
         self.start = tr.local_naive(start)
         self.prompt = prompt or None
         self.replacements = replacements or {}
         self.sample_rate = sample_rate
-        self.period_s, self.window_s, self.hold_s, self.force_s, self.gap_s = period_s, window_s, hold_s, force_s, gap_s
+        self.speech = speech
         self.transcript = yus.Transcript()
         self.committed: list[TimedWord] = []  # every committed word, before mondegreen replacement
         self.passes: list[DecodePass] = []
@@ -248,12 +250,32 @@ class LiveTranscriber:
         self._resampler = _Resampler(sample_rate) if sample_rate != SAMPLE_RATE else None
         self._buffer = np.zeros(0, dtype=np.float32)  # the last window_s seconds, at 16 kHz
         self._received = 0  # 16 kHz samples received
-        self._decoded = 0  # ...when the last decode ran
+        self._decoded = 0  # ...when the last decode ran (or was skipped)
+        self._whispered = 0  # ...when Whisper last decoded
+        self._waiting: list[np.ndarray] = []  # audio fed without decoding, at 16 kHz, not in the buffer yet
         self._open: list[TimedWord] = []  # committed words of the group not yet closed
         self._pending: list[TimedWord] = []  # the last decode's uncommitted words
         self._ready: list[yus.TranscriptGroup] = []  # groups completed by a feed() that then raised, for the next call to return
         self._horizon = 0.0
         self._flushed = False
+
+    @property
+    def period_s(self) -> float:
+        """Seconds of new audio that make a decode due. It can be changed between calls (a server decodes less often when several
+        commentators share the GPU), within force_s + period_s < window_s. A shorter period applies after the next decode, which
+        still waits the longer one: `horizon` assumed no decode before then."""
+        return self._period_s
+
+    @period_s.setter
+    def period_s(self, value: float) -> None:
+        if not (0 < value and int((self.window_s - self.force_s - value) * SAMPLE_RATE) >= 1):
+            raise ValueError(f"need 0 < period_s and force_s + period_s < window_s, got period_s={value}, force_s={self.force_s}, window_s={self.window_s}")
+        self._period_s = value
+
+    @property
+    def due(self) -> bool:
+        """Whether `period_s` of new audio has arrived since the last decode: the next feed() decodes (or skips a silent pass)."""
+        return self._received + sum(map(len, self._waiting)) - self._decoded >= self._wait
 
     @property
     def pending_text(self) -> str:
@@ -271,7 +293,7 @@ class LiveTranscriber:
     @property
     def audio_s(self) -> float:
         """Seconds of audio received."""
-        return self._received / SAMPLE_RATE
+        return (self._received + sum(map(len, self._waiting))) / SAMPLE_RATE
 
     @property
     def horizon(self) -> dt.datetime:
@@ -282,11 +304,12 @@ class LiveTranscriber:
         It never decreases; after flush() it is the end of the audio."""
         return self.start + dt.timedelta(seconds=round(self.audio_s if self._flushed else self._horizon, 3))
 
-    def feed(self, samples: np.ndarray) -> list[yus.TranscriptGroup]:
+    def feed(self, samples: np.ndarray, decode: bool = True) -> list[yus.TranscriptGroup]:
         """Add mono audio at `sample_rate` that just arrived; return the groups completed by it. Decodes when `period_s` of new audio has
         arrived, once per call however much arrived (a decoder that fell behind skips ahead), except that a backlog too long for one window
-        is decoded in steps so that no audio goes undecoded. If a decode raises, the error propagates, but all of the audio is kept (word
-        times stay right) and the groups completed before it are returned by the next call."""
+        is decoded in steps so that no audio goes undecoded. With decode=False the audio only waits, for a later call to decode (a server
+        does so when it is this commentator's turn on the GPU). If a decode raises, the error propagates, but all of the audio is kept
+        (word times stay right) and the groups completed before it are returned by the next call."""
         if self._flushed:
             raise RuntimeError("feed() after flush(): the stream has ended")
         audio = np.asarray(samples, dtype=np.float32)
@@ -296,13 +319,21 @@ class LiveTranscriber:
         if self._resampler:
             audio = self._resampler.resample(audio)
         groups, self._ready = self._ready, []
-        for i in range(0, len(audio), self._step):
-            self._append(audio[i : i + self._step])
-            if self._received - self._decoded >= self.period_s * SAMPLE_RATE:
+        if not decode:
+            self._waiting.append(audio)
+            return groups
+        if self._waiting:
+            audio, self._waiting = np.concatenate([*self._waiting, audio]), []
+        pos = 0
+        while pos < len(audio):
+            step = self._step  # a decode can change it (a new period applies)
+            self._append(audio[pos : pos + step])
+            pos += step
+            if self._received - self._decoded >= self._wait:
                 try:
                     groups += self._decode(final=False)
                 except BaseException:  # a failed decode: keep the rest of the audio (or later word times would shift) and the groups so far
-                    self._append(audio[i + self._step :])
+                    self._append(audio[pos:])
                     self._ready = groups
                     raise
         return groups
@@ -312,9 +343,10 @@ class LiveTranscriber:
         it did not hear again), and return the remaining groups."""
         if self._flushed:
             return []
+        groups = self.feed(np.zeros(0, dtype=np.float32)) if self._waiting else []
         if self._resampler:
             self._append(self._resampler.resample(None))
-        groups, self._ready = self._ready, []
+        groups, self._ready = groups + self._ready, []
         if self._received > self._decoded:
             try:
                 groups += self._decode(final=True)
@@ -329,6 +361,16 @@ class LiveTranscriber:
         self._flushed = True
         return groups
 
+    @property
+    def _wait(self) -> float:
+        """Samples of new audio that make a decode due."""
+        return max(self.period_s, self._promised) * SAMPLE_RATE
+
+    @property
+    def _step(self) -> int:
+        """Samples per decode when a backlog is decoded in steps."""
+        return int((self.window_s - self.force_s) * SAMPLE_RATE - self._wait)
+
     def _append(self, audio: np.ndarray) -> None:
         keep = int(self.window_s * SAMPLE_RATE)
         self._buffer = np.concatenate([self._buffer, audio])[-keep:]
@@ -336,8 +378,14 @@ class LiveTranscriber:
 
     def _decode(self, final: bool) -> list[yus.TranscriptGroup]:
         now = self._received / SAMPLE_RATE
-        self._decoded = self._received
+        new, self._decoded, self._promised = self._received - self._decoded, self._received, self.period_s
         began = time.perf_counter()
+        if not final and self._quiet(new):
+            delivered = max(self.committed[-1].end if self.committed else 0.0, now + self.period_s - self.window_s)
+            self._horizon = max(self._horizon, delivered)  # as a decode that heard nothing new: nothing is open or pending
+            self.passes.append(DecodePass(end=now, compute=time.perf_counter() - began, skipped=True))
+            return []
+        self._whispered = self._received
         segments = self._transcribe(self._buffer, self.prompt) if len(self._buffer) else []
         compute = time.perf_counter() - began
         window_start = now - len(self._buffer) / SAMPLE_RATE
@@ -362,6 +410,14 @@ class LiveTranscriber:
         self._horizon = max(self._horizon, min([delivered] + [words[0].start for words in (self._open, self._pending) if words]))
         self.passes.append(DecodePass(end=now, compute=compute, words=len(new), committed=n))
         return groups
+
+    def _quiet(self, new: int) -> bool:
+        """Whether this decode can be skipped: nothing waits to be committed (no open group, no pending words), `speech` hears none in
+        the new audio (and the half second before it), and Whisper decoded within the last backlog step (so no audio leaves the window
+        undecoded if `speech` misses some)."""
+        if self.speech is None or self._open or self._pending or self._received - self._whispered > self._step:
+            return False
+        return not self.speech(self._buffer[-(new + SAMPLE_RATE // 2) :])
 
     def _paused(self, now: float) -> bool:
         """Whether the latest decode heard a pause of more than gap_s after the last committed word."""
@@ -393,6 +449,22 @@ class LiveTranscriber:
         group.add_interpretation(confidence=statistics.fmean(w.logprob for w in self._open)).words.extend(tr.replace_mondegreens(words, self.replacements, self.fired))
         self._open = []
         return group
+
+
+class SileroSpeech:
+    """speech(audio) for LiveTranscriber: whether 16 kHz audio holds speech, by Silero VAD (shipped with faster-whisper; about 7 ms
+    of CPU for 3.5 s of audio). A frame of 32 ms at `threshold` or above is speech."""
+
+    def __init__(self, threshold: float = 0.5) -> None:
+        from faster_whisper.vad import get_vad_model  # type: ignore[import-not-found]
+
+        self.threshold = threshold
+        self._model = get_vad_model()
+
+    def __call__(self, audio: np.ndarray) -> bool:
+        if not len(audio):
+            return False
+        return float(np.max(self._model(np.pad(np.asarray(audio, dtype=np.float32), (0, -len(audio) % 512))))) >= self.threshold
 
 
 class _Resampler:
@@ -636,6 +708,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window", type=float, default=20.0, help="Decode the last this many seconds (default: 20).")
     parser.add_argument("--hold", type=float, default=1.0, help="Commit words two decodes agree on once they ended this many seconds ago (default: 1).")
     parser.add_argument("--force", type=float, default=4.0, help="Commit words that ended this many seconds ago even without agreement (default: 4).")
+    parser.add_argument("--skip-silence", action="store_true", help="Skip decodes of new audio in which Silero VAD hears no speech, while no words wait to be committed.")
     parser.add_argument("--start", type=float, help="Start this many seconds into the audio.")
     parser.add_argument("--stop", type=float, help="Stop this many seconds into the audio.")
     parser.add_argument("-o", "--output", type=pathlib.Path, help="Write the transcript JSON here (default: <audio>.live.json).")
@@ -676,6 +749,7 @@ def main() -> int:
         hold_s=args.hold,
         force_s=args.force,
         transcribe=whisper,
+        speech=SileroSpeech() if args.skip_silence else None,
     )
     timings = simulate(transcriber, audio, speed=args.speed, on_groups=None if args.quiet else lambda groups, now: print_groups(groups, now, transcriber))
 
@@ -683,6 +757,8 @@ def main() -> int:
     tr.write_transcript_json(transcriber.transcript, output)
     if args.timings:
         args.timings.write_text(json.dumps({**timings.model_dump(), "passes": [p.model_dump() for p in transcriber.passes]}) + "\n")
+    if args.skip_silence:
+        print(f"Skipped {sum(p.skipped for p in transcriber.passes)} of {len(transcriber.passes)} decodes", file=sys.stderr)
     for (heard, replacement), count in transcriber.fired.most_common():
         print(f"Replaced {heard!r} with {replacement!r} ({count}x)", file=sys.stderr)
     print(timings.summary(), file=sys.stderr)

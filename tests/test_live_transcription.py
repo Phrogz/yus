@@ -414,6 +414,94 @@ def test_a_decode_that_keeps_no_words_in_silence_moves_on() -> None:
     assert not any(p.failed for p in lt.passes) and lt.horizon == T0 + dt.timedelta(seconds=30.0 + lt.period_s - lt.window_s)
 
 
+# Decoding less --------------------------------------------------------------------------------------------------------------------------
+
+
+def test_audio_fed_without_decoding_waits_for_a_feed_that_decodes_it() -> None:
+    """A server feeds audio as it arrives with decode=False, and decodes when it is the commentator's turn on the GPU: one decode,
+    of the newest audio. The transcript is the same."""
+    fake = FakeWhisper(PLAY)
+    lt = transcriber(fake)
+    audio = ramp(25.0)
+    for pos in range(0, int(7.4 * SR), SR // 10):
+        assert lt.feed(audio[pos : pos + SR // 10], decode=False) == []
+    assert lt.due and fake.windows == [] and lt.audio_s == pytest.approx(7.4)
+    fed = lt.feed(np.zeros(0, dtype=np.float32))
+    assert [end for _, end, _ in fake.windows] == [pytest.approx(7.4)] and not lt.due
+    fed += lt.feed(audio[int(7.4 * SR) : int(9 * SR)], decode=False) + lt.feed(audio[int(9 * SR) :])
+    assert group_texts(fed + lt.flush()) == UTTERANCES and word_times(lt.transcript.groups) == pytest.approx(PLAY)
+
+
+def test_flush_decodes_audio_that_waited() -> None:
+    fake = FakeWhisper(speak("for the score", 1.0))
+    lt = transcriber(fake)
+    lt.feed(ramp(2.5), decode=False)
+    assert group_texts(lt.flush()) == ["for the score"] and [end for _, end, _ in fake.windows] == [2.5]
+
+
+def test_the_period_can_change_between_feeds() -> None:
+    fake = FakeWhisper(PLAY)
+    lt = transcriber(fake)
+    groups = run_from(lt, 0.0, 9.0)
+    lt.period_s = 4.5
+    groups += run_from(lt, 9.0, 25.0) + lt.flush()
+    assert [end for _, end, _ in fake.windows] == [3.0, 6.0, 9.0, 13.5, 18.0, 22.5, 25.0]
+    assert group_texts(groups) == UTTERANCES
+    with pytest.raises(ValueError, match="force_s"):
+        lt.period_s = 16.0  # force_s + period_s must stay below window_s
+    assert lt.period_s == 4.5
+
+
+def test_a_shorter_period_applies_after_the_next_decode() -> None:
+    """`horizon` promises that no later decode hears audio before it, which assumes the period at the last decode: the next decode
+    still waits that long. (A server shortens the period when a commentator leaves.)"""
+    fake = FakeWhisper([])
+    lt = transcriber(fake, period_s=4.5)
+    run_from(lt, 0.0, 31.5)
+    promised = lt.horizon
+    lt.period_s = 3.0
+    run_from(lt, 31.5, 42.0)
+    assert [end for _, end, _ in fake.windows[-4:]] == [31.5, 36.0, 39.0, 42.0]
+    assert T0 + dt.timedelta(seconds=fake.windows[-3][0]) >= promised
+    lt.period_s = 4.5
+    run_from(lt, 42.0, 46.5)
+    lt.period_s = 3.0
+    lt.feed(ramp(80.0)[int(46.5 * SR) :])  # a backlog, decoded in steps (window - force - period) that grow once 3 s applies
+    assert [end for _, end, _ in fake.windows[-4:]] == [46.5, 58.0, 71.0, 80.0] and lt.audio_s == 80.0
+    assert all(b[0] <= a[1] - lt.force_s - lt.period_s for a, b in zip(fake.windows[-4:], fake.windows[-3:]))  # no audio left undecoded
+
+
+def speech_in(script: Script) -> Callable[[np.ndarray], bool]:
+    """speech() for ramp audio: whether a scripted word overlaps it."""
+
+    def speech(audio: np.ndarray) -> bool:
+        start, end = float(audio[0]) / SR, (float(audio[-1]) + 1) / SR
+        return any(s < end and e > start for _, s, e in script)
+
+    return speech
+
+
+def test_silent_decodes_are_skipped_while_nothing_waits_to_be_committed() -> None:
+    script = speak("picked up by pikachu", 1.0) + speak("backhand to glasses", 30.5)
+    fake = FakeWhisper(script)
+    lt = transcriber(fake, speech=speech_in(script))
+    groups = run_from(lt, 0.0, 30.0)
+    assert lt.horizon == T0 + dt.timedelta(seconds=30.0 + lt.period_s - lt.window_s)  # as if the skipped decodes had heard nothing
+    groups += run_from(lt, 30.0, 40.0) + lt.flush()
+    assert group_texts(groups) == ["picked up by pikachu", "backhand to glasses"] and word_times(groups) == pytest.approx(script)
+    # 6 s: silent, but the words heard at 3 s wait to be committed. 21 s: no decode for more than 13 s (window - force - period), in
+    # case speech() missed words that are leaving the window
+    assert [p.end for p in lt.passes if not p.skipped] == [end for _, end, _ in fake.windows] == [3.0, 6.0, 21.0, 33.0, 36.0, 40.0]
+    assert [p.end for p in lt.passes if p.skipped] == [9.0, 12.0, 15.0, 18.0, 24.0, 27.0, 30.0, 39.0]
+
+
+def test_silero_hears_no_speech_in_silence() -> None:
+    pytest.importorskip("onnxruntime")
+    speech = live.SileroSpeech()
+    assert not speech(np.zeros(3 * SR, dtype=np.float32)) and not speech(np.zeros(0, dtype=np.float32))
+    assert not speech(np.random.default_rng(0).normal(0, 0.01, 3 * SR).astype(np.float32))
+
+
 # Groups ----------------------------------------------------------------------------------------------------------------------------------
 
 
