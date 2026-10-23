@@ -37,6 +37,8 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
   _huck into the end zone, off the wall, caught by Joe for the score."_
 
   * Test transcriptions, and the expected events from them are available in the `tests/data` directory.
+  * Rules in `yus/processing/event_extraction` already read one commentator's throws, Ds, substitutions and simple
+    corrections ([extraction.md](extraction.md)); other people's phrasings are where they fail.
 
 * **Event Unification**: Given two event streams from two commentators, we need logic to merge them, figure out how to
   unify "Pikachu" and "Matt" and "Whitlock", resolve cases where one commentator did not see who caught it but the other
@@ -45,10 +47,12 @@ YUS is in its early stages. We are actively soliciting support in the distinct s
   * Test event streams and their expected unified output will be in the `tests/data` directory.
     _(Both parts are built in `yus/processing/event_unification`: `PlayerResolver` maps names and per-game descriptions
     to players, and `merge_streams`/`LiveMerger` merge several commentators' streams ([merging.md](merging.md)). Merging
-    has been tested only on synthetic second commentators: a real second commentator's recording of a game would help.)_
+    has been tested only on synthetic second commentators and on one recording streamed twice: a real second
+    commentator's recording of a game would help.)_
 
 * **Stats**: Given a stream of events with timestamps, player and team names, throw types, outcomes, brainstorm on what
-  sorts of stats you'd like to see and play with.
+  sorts of stats you'd like to see and play with. Box scores, points, possessions, connections, and (from substitutions)
+  playing time, plus-minus and lines exist ([stats.md](stats.md)).
   * Stat ideas are currently captured on the [YUS Stats][5] issue.
 
 * **Visualizations**: Making pretty web pages that show the stats in a useful way.
@@ -82,7 +86,7 @@ code yus.code-workspace
 Before a pull request, run the tests and the linter:
 
 ```bash
-uv run pytest -q                          # about 35 s
+uv run pytest -q                          # about 45 s
 YUS_SLOW_TESTS=1 uv run pytest -q         # also the tests that need Whisper, a GPU, the game's audio or Chrome
 uv run ruff check yus tests && uv run ruff format --check yus tests
 ```

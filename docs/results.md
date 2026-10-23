@@ -1,7 +1,8 @@
 # End-to-End Results
 
 The whole live pipeline on the real audio of the 2025-01-14 20:30 game (960.6 s, one commentator), scored against the
-hand-made ground truth (`tests/data/gruindoor_20250114T2030-*`).
+hand-made ground truth (`tests/data/gruindoor_20250114T2030-*`). The commentary has no substitutions: those, and who is on
+the field, were measured offline on another game ([extraction.md](extraction.md#substitutions), [stats.md](stats.md#measured)).
 
 - **Setup.** An M3 Pro Mac. `yus-serve` on localhost with mlx-whisper large-v3-turbo, both team files and the game's
   descriptions file. `yus-replay` streamed the audio in real time (`--speed 1`). Other work loaded the CPU at times; the
@@ -15,9 +16,10 @@ hand-made ground truth (`tests/data/gruindoor_20250114T2030-*`).
   with `PlayerResolver` and the descriptions file. Latency runs from an event's own time (its first words) to the first
   poll that showed it, or that counted it settled. From the true events' times it is within 0.5 s of that.
 - **Before and after.** "Before" is commit 9946b0d, where each commentator decodes every 3 s and merged events settle
-  only as the merge settles them. "After" adds the shared decode scheduler (each of two commentators decodes every 4.5 s)
-  and settling once every commentator has gone quiet past an event ([server.md](server.md), [session.md](session.md)).
-  The extraction and merging code is the same in all four runs.
+  only as the merge settles them. "After" runs commit b80d4c3's transcriber, session and server, which add the shared
+  decode scheduler (each of two commentators decodes every 4.5 s) and settling once every commentator has gone quiet past
+  an event ([server.md](server.md), [session.md](session.md)). All four runs used 9946b0d's extraction and merging code.
+  The extractor at commit a6ff6c5 (substitutions and later fixes) gives the same raw events from all six transcripts.
 
 | | one: before | one: after | two: before | two: after |
 |---|---|---|---|---|

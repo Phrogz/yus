@@ -83,6 +83,8 @@ or likely that there will be confusion, causing two people to cover the same pla
 
 * What if commentator doesn’t know the name of all 11 people on a team, or 22 people on both teams?
   * This is my biggest concern for indoor league. Maybe they just say “someone”?
+  * _Now:_ they can say a description (“red shorts”), identified later in the game's descriptions file, on `/admin`,
+    or aloud (“red shorts is Kaia”) ([usage.md](docs/usage.md#game-description-files)).
 
 * What if commentator makes a verbal mistake?
   * What are the sorts of things they would make a mistake on, what would they generally say in response?
@@ -90,14 +92,20 @@ or likely that there will be confusion, causing two people to cover the same pla
     * Wrong throw type: “dump to Killian; a flick dump”
     * Wrong event “for a score…er, nope, not in, no score”
   * Fast pace of game makes it hard to make a correction in realtime.
+  * _Now:_ the extractor takes back a score and replaces a name or receiver in the most recent throw; it does not
+    understand a corrected throw type ([extraction.md](docs/extraction.md#how-it-works)).
 
 * How to we fix inconsistent player references?
   * “Federbusch D's the disc. Picked up by Busch for white.”
   * “Blue tank top picks it up … flicked to blue tank … blue top goes deep.”
   * “Stephen Butler has the disc … D'd by Stephen … Butler has catches.”
   * “Killian takes the pull … huck to Killer in the end zone”
+  * _Now:_ team files list nicknames and mishearings, and a first or last name unique on the team resolves; a per-game
+    descriptions file maps the rest. There is no fuzzy matching.
 
 * What if _N_ commentators provide conflicting data? (Different player names, different accounts of what happened.)
+  * _Now:_ merging pairs their events and settles each disagreement by rule: a roster name beats a description, a score
+    beats silence, then the commentator following that team, then the majority ([merging.md](docs/merging.md)).
 
 ## More Details
 
@@ -138,7 +146,9 @@ Phones only give a page the microphone over HTTPS: [HTTPS for phones](docs/serve
 certificate or a tunnel. Without `--ssl-*`, only a browser on the server's own computer can commentate
 (`http://localhost:8000/commentate`). Use `--key` when the server is reachable from the internet. The game is saved in
 `games/<start time>/` (transcripts, events, the official stream and the audio), and `--load DIR` resumes it.
-An M3 Pro keeps up with two commentators, without headroom for a third ([results](docs/results.md)).
+Commentators take turns on the GPU: each one's audio is decoded every 3 s alone, every 4.5 s with two, 6.75 s with three
+(`--period`, `--period-per-commentator`). On an M3 Pro, two kept the GPU 65% busy; three were not tried
+([results](docs/results.md)).
 
 ### Process Recordings Afterwards
 
@@ -186,12 +196,12 @@ on `/admin`. The game is timed on the day of the replay; `yus-replay` prints whe
 | [architecture.md](docs/architecture.md) | the phases, what is built and what is not |
 | [usage.md](docs/usage.md) | `yus-transcribe`, team files, game description files |
 | [live_transcription.md](docs/live_transcription.md) | transcribing as audio arrives; `yus-live-transcribe` |
-| [extraction.md](docs/extraction.md) | `yus-events`, `yus-score`. [event_extraction_design.md](docs/event_extraction_design.md) is the first, LLM-based proposal |
+| [extraction.md](docs/extraction.md) | `yus-events` (throws, Ds, substitutions, corrections), `yus-score`. [event_extraction_design.md](docs/event_extraction_design.md) is the first, LLM-based proposal |
 | [merging.md](docs/merging.md) | merging commentators' event streams |
-| [stats.md](docs/stats.md) | the stats tables; `yus-stats` |
+| [stats.md](docs/stats.md) | the stats tables, including playing time, plus-minus and lines; `yus-stats` |
 | [postgame.md](docs/postgame.md) | `yus-game`: a game's recordings processed afterwards |
 | [session.md](docs/session.md) | `GameSession`, which runs the pipeline for one game, and its saved files |
-| [server.md](docs/server.md) | `yus-serve`, the commentate page, HTTPS, `yus-replay` |
+| [server.md](docs/server.md) | `yus-serve`, the commentate page, sharing the GPU, HTTPS, `yus-replay` |
 | [dashboard.md](docs/dashboard.md) | the live stats dashboard |
 | [results.md](docs/results.md) | the whole pipeline measured on a real game |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | how to help; tests run with `uv run pytest -q` |

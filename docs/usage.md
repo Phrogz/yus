@@ -179,7 +179,8 @@ A team JSON file describes one team and its players. Here's the basic structure:
 
 - **Use both teams** - Specify team files for both teams playing: `--team team1.json --team team2.json`
 - **Include jersey numbers** - If you reference players by number, add those as nicknames:
-  `"Matt Whitlock": ["Pikachu", "14"]`
+  `"Matt Whitlock": ["Pikachu", "14"]`. Event extraction then reads "to 14" as that player; otherwise a number up to 20
+  is a name only right before "on" or "off" ([extraction.md](extraction.md#substitutions))
 - **Lower case in mondegreen** - The correction is case-insensitive, so you can use lowercase for mondegreens
 - **Full names** - List players by full name; the prompt lists each full name once (not first and last names separately)
   to leave room for more players and terms
@@ -231,7 +232,7 @@ yus-transcribe recordings/2025-01-14_game1.wav \
 The default output is a structured JSON file containing:
 
 - Transcript groups (sections of continuous speech)
-- Multiple interpretations per group (if ASR provides alternatives)
+- Interpretations of each group (Whisper gives one)
 - Individual words with timestamps and confidence scores
 
 This format preserves all timing and confidence information for downstream processing.
@@ -303,9 +304,12 @@ example. Spoken identifications ("red shorts is Kaia") become descriptions live,
 After transcription, the structured transcript can be:
 
 1. **Reviewed and corrected** - Check for any remaining errors
-2. **Converted to events** - Extract game actions (throws, scores, etc.) with `yus-events` ([extraction.md](extraction.md))
+2. **Converted to events** - Extract throws, defenses and substitutions with `yus-events` ([extraction.md](extraction.md))
 3. **Resolved to players** - Map the names and descriptions commentators used to roster players (see [Game Description Files](#game-description-files))
-4. **Analyzed for statistics** - Generate player and team stats with `yus-stats` ([stats.md](stats.md))
-5. **Visualized** - Replay the recording into `yus-serve` and watch its dashboard ([server.md](server.md), [dashboard.md](dashboard.md))
+4. **Analyzed for statistics** - Generate player and team stats, and from substitutions playing time and plus-minus, with `yus-stats` ([stats.md](stats.md))
+5. **Visualized** - Show the game on `yus-serve`'s dashboard: `--load` a game directory, or replay the recording into it ([server.md](server.md), [dashboard.md](dashboard.md))
+
+`yus-game` does steps 2–4 for a whole game at once, merging several commentators, and writes a game directory, an HTML report
+and CSV tables ([postgame.md](postgame.md)).
 
 The [README](../README.md#running-yus) walks through a whole game, live or afterwards.
