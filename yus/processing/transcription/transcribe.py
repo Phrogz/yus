@@ -13,6 +13,7 @@ import math
 import pathlib
 import platform
 import re
+import statistics
 import sys
 from collections import Counter
 from types import SimpleNamespace
@@ -207,18 +208,34 @@ def normalize_text(text: str, replacements: Replacements, fired: Counter[tuple[s
     return " ".join(result)
 
 
+def word_probability(word: Any) -> float:
+    """A Whisper word's probability; 0 when missing or not finite (a NaN would make the transcript's JSON invalid)."""
+    probability = float(getattr(word, "probability", None) or 0.0)
+    return probability if math.isfinite(probability) else 0.0
+
+
+def segment_logprob(seg: Any) -> float:
+    """The segment's avg_logprob or, when Whisper reports none or a value that is not finite (mlx-whisper gives NaN for about 1 decode in 6),
+    the mean log probability of its words, as yus-live-transcribe does; 0 for a segment without words. Never NaN or infinite."""
+    logprob = float(seg.avg_logprob) if getattr(seg, "avg_logprob", None) is not None else math.nan
+    if math.isfinite(logprob):
+        return logprob
+    probabilities = [word_probability(w) for w in getattr(seg, "words", None) or [] if w.word.strip()]
+    return statistics.fmean(math.log(max(p, 1e-6)) for p in probabilities) if probabilities else 0.0
+
+
 def segment_words(seg: Any, recording_start: dt.datetime, replacements: Replacements, fired: Counter[tuple[str, str]] | None = None) -> list[yus.Word]:
     """Words of one Whisper segment, without the leading space Whisper puts on each word, and with mondegreens replaced."""
     if not getattr(seg, "words", None):
         # Fallback: no word timings provided; create a single word with segment text.
         text = normalize_text(seg.text.strip(), replacements, fired)
         start = recording_start + dt.timedelta(seconds=float(seg.start))
-        return [yus.Word(text=text, start=start, duration=dt.timedelta(seconds=float(seg.end) - float(seg.start)), confidence=float(seg.avg_logprob or 0.0))] if text else []
+        return [yus.Word(text=text, start=start, duration=dt.timedelta(seconds=float(seg.end) - float(seg.start)), confidence=segment_logprob(seg))] if text else []
     words: list[yus.Word] = []
     for w in seg.words:
         if text := w.word.strip():
             start = recording_start + dt.timedelta(seconds=float(w.start))
-            words.append(yus.Word(text=text, start=start, duration=dt.timedelta(seconds=float(w.end) - float(w.start)), confidence=float(w.probability or 0.0)))
+            words.append(yus.Word(text=text, start=start, duration=dt.timedelta(seconds=float(w.end) - float(w.start)), confidence=word_probability(w)))
     return replace_mondegreens(words, replacements, fired)
 
 
@@ -255,7 +272,7 @@ def transcript_from_segments(
         if not words:
             continue
 
-        interp = transcript.add_group().add_interpretation(confidence=seg.avg_logprob if seg.avg_logprob is not None else 0.0)
+        interp = transcript.add_group().add_interpretation(confidence=segment_logprob(seg))
         interp.words.extend(words)
         if show_text:
             print(interp.transcript, flush=True)

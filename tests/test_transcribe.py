@@ -3,6 +3,7 @@
 import datetime as dt
 import inspect
 import json
+import math
 import pathlib
 import re
 import time
@@ -149,6 +150,24 @@ def test_segment_text_fallback_without_word_timings(replacements: tr.Replacement
     assert [texts(g) for g in groups] == [["Dump to Adam Federbusch."], ["Feather, brush. Stephen Butler!"]]
     assert groups[0][0].duration == dt.timedelta(seconds=2)
     assert fired == Counter({("feather brush", "Adam Federbusch"): 1, ("steven butler", "Stephen Butler"): 1})
+
+
+def test_nan_confidences_become_word_probabilities(replacements: tr.Replacements, tmp_path: pathlib.Path) -> None:
+    nan = float("nan")
+    words = [whisper_word(" Flick", 1.0, 1.3, 0.5), whisper_word(" to", 1.3, 1.4, nan), whisper_word(" Kaia.", 1.4, 1.8, 0.25)]
+    segs = [
+        SimpleNamespace(start=1.0, end=1.8, text=" Flick to Kaia.", avg_logprob=nan, words=words),
+        SimpleNamespace(start=2.0, end=3.0, text=" Pull!", avg_logprob=-0.4, words=[whisper_word(" Pull!", 2.0, 3.0, 0.7)]),
+        SimpleNamespace(start=4.0, end=5.0, text=" Dump.", avg_logprob=nan, words=None),  # mlx-whisper reports NaN for about 1 decode in 6
+    ]
+    transcript = tr.transcript_from_segments(segs, recording_start=T0, show_progress=False, replacements=replacements)
+    assert [g.interpretations[0].confidence for g in transcript.groups] == pytest.approx([(math.log(0.5) + math.log(1e-6) + math.log(0.25)) / 3, -0.4, 0.0])
+    assert [w.confidence for w in transcript.groups[0].words] == [0.5, 0.0, 0.25]
+
+    path = tmp_path / "game.transcript.json"
+    tr.write_transcript_json(transcript, path)
+    json.loads(path.read_text(), parse_constant=lambda name: pytest.fail(f"{name} in the transcript's JSON"))
+    assert yus.Transcript.model_validate_json(path.read_text()).groups[0].interpretations[0].confidence == pytest.approx(transcript.groups[0].interpretations[0].confidence)
 
 
 def test_bad_team_file_is_an_error(tmp_path: pathlib.Path) -> None:
