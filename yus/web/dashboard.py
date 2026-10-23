@@ -21,7 +21,6 @@ from typing import Any
 
 import dash
 import pandas as pd
-import plotly.graph_objects as go
 from dash import Input, Output, State, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 from werkzeug.serving import make_server
@@ -328,95 +327,107 @@ def _naive(when: dt.datetime, snapshot: GameSnapshot) -> dt.datetime:
     return when.astimezone(zone).replace(tzinfo=None)
 
 
-# --- figures
+# --- figures: plain dicts, which plotly.js draws as they are (building plotly.graph_objects figures took 10 times as long)
+
+Figure = dict[str, Any]
+AXIS_STYLE = {"gridcolor": GRID, "linecolor": AXIS, "ticks": "", "zeroline": False, "automargin": True, "fixedrange": True}
+LEGEND = {"orientation": "h", "y": 1.02, "yanchor": "bottom", "x": 0}
 
 
-def _score_figure(stats: GameStats, end: float) -> go.Figure:
-    timeline = stats.score_timeline
-    if not len(timeline) and not len(stats.points):
+def _figure(data: list[dict[str, Any]], height: int | None = None, xaxis: dict[str, Any] | None = None, yaxis: dict[str, Any] | None = None, **layout: Any) -> Figure:
+    style = {
+        "paper_bgcolor": SURFACE,
+        "plot_bgcolor": SURFACE,
+        "font": {"family": FONT, "size": 12, "color": INK_2},
+        "margin": {"l": 8, "r": 8, "t": 8, "b": 8},
+        "hoverlabel": {"bgcolor": "white", "font": {"size": 12, "color": INK}},
+        "uirevision": "keep",  # keep legend clicks across updates
+        "xaxis": AXIS_STYLE | (xaxis or {}),
+        "yaxis": AXIS_STYLE | (yaxis or {}),
+    }
+    return {"data": data, "layout": style | ({"height": height} if height else {}) | layout}
+
+
+def _score_figure(stats: GameStats, end: float) -> Figure:
+    timeline, points = stats.score_timeline, stats.points
+    if not len(timeline) and not len(points):
         return _empty_figure("No points yet")
-    fig = go.Figure()
     shapes = []
-    for _, row in stats.points.iterrows():
-        if not pd.isna(row["hold"]):
-            hold = bool(row["hold"])
-            color = GRID if hold else _team_color(stats, row["scored_by"])
-            span = {"x0": _minutes(row["start"], stats), "x1": _minutes(row["end"], stats), "fillcolor": color, "opacity": 0.45 if hold else 0.16}
+    for start, stop, hold, scored_by in zip(points["start"], points["end"], points["hold"], points["scored_by"]):
+        if not pd.isna(hold):
+            span = {"x0": _minutes(start, stats), "x1": _minutes(stop, stats), "fillcolor": GRID if hold else _team_color(stats, scored_by), "opacity": 0.45 if hold else 0.16}
             shapes.append({"type": "rect", "xref": "x", "yref": "paper", "y0": 0, "y1": 1, "line": {"width": 0}, "layer": "below"} | span)
-    fig.update_layout(shapes=shapes)  # one update: add_vrect per point is 50x slower
-    minutes = list(timeline["elapsed"] / 60)
+    minutes = [float(m) for m in timeline["elapsed"] / 60]
+    last = max(end / 60, minutes[-1] if minutes else 0.0)
+    data = []
     for team in stats.teams:
-        column = SCORE_PREFIX + team
+        column, color = SCORE_PREFIX + team, _team_color(stats, team)
         scores = [int(score) for score in timeline[column]] if column in timeline else []
-        color = _team_color(stats, team)
-        fig.add_scatter(
-            x=[0.0] + minutes + [max(end / 60, minutes[-1] if minutes else 0.0)],
-            y=[0] + scores + [scores[-1] if scores else 0],
-            mode="lines",
-            line={"shape": "hv", "width": 2, "color": color},
-            name=f"{team} {scores[-1] if scores else 0}",
-            hoverinfo="skip",
-        )
+        total = scores[-1] if scores else 0
+        line = {"shape": "hv", "width": 2, "color": color}
+        data.append({"type": "scatter", "mode": "lines", "x": [0.0] + minutes + [last], "y": [0] + scores + [total], "line": line, "name": f"{team} {total}", "hoverinfo": "skip"})
         goals = timeline[timeline["team"] == team]
         if len(goals):
-            fig.add_scatter(
-                x=goals["elapsed"] / 60,
-                y=goals[column],
-                mode="markers",
-                marker={"size": 9, "color": [SURFACE if p else color for p in goals["provisional"]], "line": {"color": color, "width": 2}},
-                showlegend=False,
-                customdata=[_goal_hover(stats, goal, row) for goal, row in goals.iterrows()],
-                hovertemplate="%{customdata}<extra></extra>",
+            marker = {"size": 9, "color": [SURFACE if p else color for p in goals["provisional"]], "line": {"color": color, "width": 2}}
+            data.append(
+                {
+                    "type": "scatter",
+                    "mode": "markers",
+                    "x": [float(m) for m in goals["elapsed"] / 60],
+                    "y": [int(score) for score in goals[column]],
+                    "marker": marker,
+                    "showlegend": False,
+                    "customdata": [_goal_hover(stats, goal, row) for goal, row in goals.iterrows()],
+                    "hovertemplate": "%{customdata}<extra></extra>",
+                }
             )
-    _style(fig, height=None, legend={"orientation": "h", "y": 1.02, "yanchor": "bottom", "x": 0})
-    fig.update_xaxes(title_text="minutes", rangemode="tozero")
-    fig.update_yaxes(rangemode="tozero", tickformat="d", dtick=_score_dtick(stats))
-    return fig
+    xaxis = {"title": {"text": "minutes"}, "rangemode": "tozero"}
+    return _figure(data, shapes=shapes, legend=LEGEND, xaxis=xaxis, yaxis={"rangemode": "tozero", "tickformat": "d", "dtick": _score_dtick(stats)})
 
 
 def _goal_hover(stats: GameStats, goal: int, row: pd.Series) -> str:
     score = "–".join(str(int(row[SCORE_PREFIX + team])) for team in stats.teams)
     kind = "" if pd.isna(row["hold"]) else (" · hold" if row["hold"] else " · break")
-    thrower = row["assist"] or "?"
-    return f"Goal {goal}: {thrower} → {row['scorer'] or '?'}<br>{score}{kind} · {_mmss(row['elapsed'])}{' · provisional' if row['provisional'] else ''}"
+    return f"Goal {goal}: {row['assist'] or '?'} → {row['scorer'] or '?'}<br>{score}{kind} · {_mmss(row['elapsed'])}{' · provisional' if row['provisional'] else ''}"
 
 
-def _flow_figure(stats: GameStats, end: float) -> go.Figure:
+def _flow_figure(stats: GameStats, end: float) -> Figure:
     possessions = stats.possessions
+    possessions = possessions[possessions["team"].notna()]
     if not len(possessions):
         return _empty_figure("No possessions yet")
-    possessions = possessions[possessions["team"].notna()]
-    fig = go.Figure()
+    data = []
     for outcome, color in POSSESSION_COLORS.items():
         rows = possessions[possessions["outcome"] == outcome]
         if not len(rows):
             continue
-        start = [_minutes(t, stats) for t in rows["start"]]
-        length = [max(seconds, 2.0) / 60 for seconds in rows["duration_s"]]
         hatch = ["/" if provisional else "" for provisional in rows["provisional"]]
-        fig.add_bar(
-            y=rows["team"],
-            x=length,
-            base=start,
-            orientation="h",
-            name=outcome,
-            marker={"color": color, "line": {"color": SURFACE, "width": 1}, "pattern": {"shape": hatch, "fgcolor": SURFACE, "fillmode": "overlay"}},
-            customdata=[
-                f"Possession {n} · point {row['point']} · {row['team']}<br>{row['throws']} throws, {row['completions']} completed · {outcome}"
-                f"<br>{_mmss(_minutes(row['start'], stats) * 60)}–{_mmss(_minutes(row['end'], stats) * 60)}{' · provisional' if row['provisional'] else ''}"
-                for n, row in rows.iterrows()
-            ],
-            hovertemplate="%{customdata}<extra></extra>",
+        hover = [
+            f"Possession {n} · point {row['point']} · {row['team']}<br>{row['throws']} throws, {row['completions']} completed · {outcome}"
+            f"<br>{_mmss(_minutes(row['start'], stats) * 60)}–{_mmss(_minutes(row['end'], stats) * 60)}{' · provisional' if row['provisional'] else ''}"
+            for n, row in rows.iterrows()
+        ]
+        data.append(
+            {
+                "type": "bar",
+                "orientation": "h",
+                "name": outcome,
+                "y": list(rows["team"]),
+                "x": [max(seconds, 2.0) / 60 for seconds in rows["duration_s"]],  # at least 2 s, to stay visible
+                "base": [_minutes(start, stats) for start in rows["start"]],
+                "marker": {"color": color, "line": {"color": SURFACE, "width": 1}, "pattern": {"shape": hatch, "fgcolor": SURFACE, "fillmode": "overlay"}},
+                "customdata": hover,
+                "hovertemplate": "%{customdata}<extra></extra>",
+            }
         )
-    goals = [_minutes(end, stats) for end, hold in zip(stats.points["end"], stats.points["hold"]) if not pd.isna(hold)]
-    fig.update_layout(shapes=[{"type": "line", "xref": "x", "yref": "paper", "x0": x, "x1": x, "y0": 0, "y1": 1, "line": {"color": AXIS, "width": 1}} for x in goals])
-    _style(fig, barmode="overlay", bargap=0.35, legend={"orientation": "h", "y": 1.02, "yanchor": "bottom", "x": 0})
-    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(stats.teams)), showgrid=False)
-    fig.update_xaxes(title_text="minutes", range=[0, max(end / 60, 0.1) * 1.01])
-    return fig
+    goals = [_minutes(stop, stats) for stop, hold in zip(stats.points["end"], stats.points["hold"]) if not pd.isna(hold)]
+    shapes = [{"type": "line", "xref": "x", "yref": "paper", "x0": x, "x1": x, "y0": 0, "y1": 1, "line": {"color": AXIS, "width": 1}} for x in goals]
+    yaxis = {"type": "category", "categoryorder": "array", "categoryarray": list(reversed(stats.teams)), "showgrid": False}
+    xaxis = {"title": {"text": "minutes"}, "range": [0, max(end / 60, 0.1) * 1.01]}
+    return _figure(data, barmode="overlay", bargap=0.35, legend=LEGEND, shapes=shapes, xaxis=xaxis, yaxis=yaxis)
 
 
-def _outcome_figure(table: pd.DataFrame, team: str, level: str) -> go.Figure:
+def _outcome_figure(table: pd.DataFrame, team: str, level: str) -> Figure:
     rows = table.xs(team, level="team") if team in table.index.get_level_values("team") else table.iloc[:0]
     rows = rows[rows["throws"] > 0]
     if not len(rows):
@@ -429,34 +440,28 @@ def _outcome_figure(table: pd.DataFrame, team: str, level: str) -> go.Figure:
         f"{' · provisional' if r['provisional'] else ''}"
         for label, (_, r) in zip(labels, rows.iterrows())
     ]
-    fig = go.Figure()
-    for name, values in parts.items():
-        fig.add_bar(
-            y=labels,
-            x=list(values),
-            orientation="h",
-            name=name,
-            marker={"color": OUTCOME_COLORS[name], "opacity": opacity, "line": {"color": SURFACE, "width": 1}},
-            customdata=hover,
-            hovertemplate="%{customdata}<extra></extra>",
-        )
-    fig.add_scatter(
-        y=labels,
-        x=list(rows["throws"]),
-        mode="text",
-        text=[f" {r['throws']} · {_pct(r['completion_pct'])}" for _, r in rows.iterrows()],
-        textposition="middle right",
-        textfont={"color": INK_2, "size": 11},
-        showlegend=False,
-        hoverinfo="skip",
-    )
-    _style(fig, barmode="stack", bargap=0.3, height=70 + 26 * len(rows), legend={"orientation": "h", "y": 1.02, "yanchor": "bottom", "x": 0, "traceorder": "normal"})
-    fig.update_xaxes(range=[0, rows["throws"].max() * 1.35], showgrid=True)
-    fig.update_yaxes(autorange="reversed", showgrid=False)
-    return fig
+    data = [
+        {
+            "type": "bar",
+            "orientation": "h",
+            "name": name,
+            "y": labels,
+            "x": [int(value) for value in values],
+            "marker": {"color": OUTCOME_COLORS[name], "opacity": opacity, "line": {"color": SURFACE, "width": 1}},
+            "customdata": hover,
+            "hovertemplate": "%{customdata}<extra></extra>",
+        }
+        for name, values in parts.items()
+    ]
+    totals = [f" {r['throws']} · {_pct(r['completion_pct'])}" for _, r in rows.iterrows()]
+    data.append({"type": "scatter", "mode": "text", "y": labels, "x": [int(n) for n in rows["throws"]], "text": totals, "textposition": "middle right", "showlegend": False})
+    data[-1] |= {"textfont": {"color": INK_2, "size": 11}, "hoverinfo": "skip"}
+    xaxis = {"range": [0, float(rows["throws"].max()) * 1.35]}
+    yaxis = {"type": "category", "autorange": "reversed", "showgrid": False}
+    return _figure(data, height=70 + 26 * len(rows), barmode="stack", bargap=0.3, legend=LEGEND | {"traceorder": "normal"}, xaxis=xaxis, yaxis=yaxis)
 
 
-def _connections_figure(stats: GameStats, team: str) -> go.Figure:
+def _connections_figure(stats: GameStats, team: str) -> Figure:
     throws = stats.connection_matrix(team, "throws")
     if throws.empty:
         return _empty_figure("No connections yet")
@@ -465,67 +470,42 @@ def _connections_figure(stats: GameStats, team: str) -> go.Figure:
     throws = throws.reindex(index=throwers, columns=receivers, fill_value=0)
     completions = stats.connection_matrix(team, "completions").reindex(index=throwers, columns=receivers, fill_value=0)
     goals = stats.connection_matrix(team, "goals").reindex(index=throwers, columns=receivers, fill_value=0)
-    z = [[int(n) if n else None for n in row] for row in throws.to_numpy()]
-    custom = [[[int(c), int(g)] for c, g in zip(crow, grow)] for crow, grow in zip(completions.to_numpy(), goals.to_numpy())]
-    fig = go.Figure(
-        go.Heatmap(
-            z=z,
-            x=receivers,
-            y=throwers,
-            colorscale=HEAT,
-            zmin=0,
-            showscale=False,
-            xgap=2,
-            ygap=2,
-            texttemplate="%{z}",
-            customdata=custom,
-            hovertemplate="%{y} → %{x}<br>%{z} throws, %{customdata[0]} completed, %{customdata[1]} goals<extra></extra>",
-            hoverongaps=False,
-        )
-    )
-    _style(fig, height=110 + 24 * len(throwers), showlegend=False)
-    fig.update_xaxes(side="top", tickangle=-40, showgrid=False, title_text="receiver")
-    fig.update_yaxes(autorange="reversed", showgrid=False, title_text="thrower")
-    return fig
+    heatmap = {
+        "type": "heatmap",
+        "z": [[int(n) if n else None for n in row] for row in throws.to_numpy()],
+        "x": receivers,
+        "y": throwers,
+        "colorscale": HEAT,
+        "zmin": 0,
+        "showscale": False,
+        "xgap": 2,
+        "ygap": 2,
+        "texttemplate": "%{z}",
+        "customdata": [[[int(c), int(g)] for c, g in zip(crow, grow)] for crow, grow in zip(completions.to_numpy(), goals.to_numpy())],
+        "hovertemplate": "%{y} → %{x}<br>%{z} throws, %{customdata[0]} completed, %{customdata[1]} goals<extra></extra>",
+        "hoverongaps": False,
+    }
+    xaxis = {"type": "category", "side": "top", "tickangle": -40, "showgrid": False, "title": {"text": "receiver"}}
+    yaxis = {"type": "category", "autorange": "reversed", "showgrid": False, "title": {"text": "thrower"}}
+    return _figure([heatmap], height=110 + 24 * len(throwers), showlegend=False, xaxis=xaxis, yaxis=yaxis)
 
 
-def _per_team(stats: GameStats, figure: Callable[[str], go.Figure]) -> list[Any]:
+def _per_team(stats: GameStats, figure: Callable[[str], Figure]) -> list[Any]:
     graphs = []
     for team in stats.teams:
         fig = figure(team)
-        height = fig.layout.height or 160
-        graphs.append(html.Div([html.H3([html.Span(className="swatch", style={"background": _team_color(stats, team)}), team]), _graph(fig, height)], className="team-figure"))
+        title = html.H3([html.Span(className="swatch", style={"background": _team_color(stats, team)}), team])
+        graphs.append(html.Div([title, _graph(fig, fig["layout"].get("height", 160))], className="team-figure"))
     return graphs
 
 
-def _graph(fig: go.Figure, height: int, **props: Any) -> dcc.Graph:
+def _graph(fig: Figure, height: int, **props: Any) -> dcc.Graph:
     return dcc.Graph(figure=fig, style={"height": f"{height}px"}, responsive=True, config={"displayModeBar": False, "scrollZoom": False}, **props)
 
 
-def _style(fig: go.Figure, height: int | None = None, **layout: Any) -> go.Figure:
-    fig.update_layout(
-        paper_bgcolor=SURFACE,
-        plot_bgcolor=SURFACE,
-        font={"family": FONT, "size": 12, "color": INK_2},
-        margin={"l": 8, "r": 8, "t": 8, "b": 8},
-        hoverlabel={"bgcolor": "white", "font": {"size": 12, "color": INK}},
-        uirevision="keep",
-        template="none",  # the default template adds about 10 KB to every figure sent
-        height=height,
-        **layout,
-    )
-    fig.update_xaxes(gridcolor=GRID, linecolor=AXIS, zeroline=False, automargin=True, fixedrange=True)
-    fig.update_yaxes(gridcolor=GRID, linecolor=AXIS, zeroline=False, automargin=True, fixedrange=True)
-    return fig
-
-
-def _empty_figure(text: str) -> go.Figure:
-    fig = go.Figure()
-    fig.add_annotation(text=text, showarrow=False, font={"color": MUTED, "size": 13}, xref="paper", yref="paper", x=0.5, y=0.5)
-    _style(fig, height=90, showlegend=False)
-    fig.update_xaxes(visible=False)
-    fig.update_yaxes(visible=False)
-    return fig
+def _empty_figure(text: str) -> Figure:
+    note = {"text": text, "showarrow": False, "font": {"color": MUTED, "size": 13}, "xref": "paper", "yref": "paper", "x": 0.5, "y": 0.5}
+    return _figure([], height=90, showlegend=False, annotations=[note], xaxis={"visible": False}, yaxis={"visible": False})
 
 
 # --- tables and lists

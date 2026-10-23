@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import dash
+import plotly.graph_objects as go
 import pytest
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.test import Client
@@ -135,6 +136,15 @@ def layout_ids(app: dash.Dash) -> set[str]:
     return found
 
 
+def figures(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every figure a callback response carries, checked by plotly's own validation (the dashboard builds them as plain dicts)."""
+    found = [props["figure"] for props in response.values() if "figure" in props]
+    found += [c["props"]["figure"] for props in response.values() for c in components(props.get("children")) if c["type"] == "Graph"]
+    for figure in found:
+        go.Figure(figure)  # raises on a misspelled or invalid property
+    return found
+
+
 def traces(figure: dict[str, Any], name: str | None = None) -> list[dict[str, Any]]:
     return [trace for trace in figure["data"] if name is None or str(trace.get("name", "")).startswith(name)]
 
@@ -167,6 +177,28 @@ def test_serves_under_its_prefix_mounted_or_not(game, descriptions):
     assert mounted.get("/elsewhere").status_code == 404
 
 
+def test_serves_mounted_in_starlette(game, descriptions):
+    a2wsgi = pytest.importorskip("a2wsgi")
+    testclient = pytest.importorskip("starlette.testclient")
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    snapshot = truth_snapshot(game, descriptions)
+    app = create_dashboard(lambda: snapshot)
+    with testclient.TestClient(Starlette(routes=[Mount("/dashboard", app=a2wsgi.WSGIMiddleware(app.server))])) as client:
+        assert client.get("/dashboard/").status_code == 200
+        assert client.get("/dashboard/_dash-layout").status_code == 200
+
+        class Posting:  # what update() needs of a client
+            def post(self, path: str, json: dict[str, Any]) -> Any:
+                response = client.post(path, json=json)
+                response.get_json = response.json
+                return response
+
+        shown = refresh(Posting(), app)  # type: ignore[arg-type]
+    assert shown is not None and "Dump & Drizzle14" in text(shown["scoreboard"]["children"])
+
+
 # --- what the callbacks show
 
 
@@ -176,6 +208,7 @@ def truth(game, descriptions) -> dict[str, Any]:
     app = create_dashboard(lambda: snapshot, lambda *args, **kwargs: None)
     response = refresh(app.server.test_client(), app)
     assert response is not None
+    assert len(figures(response)) == 2 + 3 * 2  # score, flow; per team: throw types, directions, connections
     return {"snapshot": snapshot, "response": response}
 
 
@@ -325,6 +358,7 @@ def test_empty_session(game):
     response = refresh(app.server.test_client(), app)
     assert response is not None
     assert "Dump & Drizzle0" in text(response["scoreboard"]["children"]) and "Category 50" in text(response["scoreboard"]["children"])
+    assert len(figures(response)) == 8
     assert response["score-timeline"]["figure"]["layout"]["annotations"][0]["text"] == "No points yet"
     assert text(response["events"]["children"]) == "No events yet."
     assert response["player-box"]["data"] == []
