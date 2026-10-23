@@ -248,12 +248,11 @@ transcript of the game (`tests/data/…-whisper-turbo.json`), each group 3 s aft
   has not been tried in iOS Safari or Android Chrome. iOS stops capturing when Safari goes to the background or the screen
   locks. The page reports silence, but cannot prevent it. If iOS also stops the page's scripts, the page cannot send
   `pause`, and the server ends that commentator's segment only after 2 minutes without a frame.
-- **Whisper not run through the server.** The live latency and accuracy in
-  [live_transcription.md](live_transcription.md#accuracy-and-latency) apply: words are committed about 6 s after they are
-  spoken.
-- **One GPU, taking turns.** Decodes are serialized. One commentator kept an M3 Pro busy about 50% of the time (1.4 s per 3 s
-  decode). Two will nearly fill it, and with more, each transcriber decodes less often and falls further behind. Watch
-  `backlog_s` and the transcript lag.
+- **Whisper through the server** was run only with `yus-replay` on one Mac (see [results.md](results.md)): events showed
+  about 8 s after they were said, and settled after 11 s with one commentator and 31 s with two.
+- **One GPU, taking turns.** Decodes are serialized. One commentator kept an M3 Pro busy 49% of the time (1.44 s per 3 s
+  decode), and two kept it 97–99% busy, with audio waiting up to 8 s. With more, each transcriber decodes less often and
+  falls further behind. Watch `backlog_s` and the transcript lag.
 - **Long outages.**
   - After 2 minutes without a frame, connected or not, a commentator's segment ends and they are advanced to the current
     time. The server cannot tell a phone that paused without saying so from a network outage, so it does not do this
