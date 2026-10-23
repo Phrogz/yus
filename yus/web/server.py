@@ -348,7 +348,6 @@ class CommentatorStream:
         DecodeScheduler), then decode everything that came by then. A segment's end flushes its transcriber, in a turn too."""
         transcriber: Transcriber | None = None
         held: collections.deque[Any] = collections.deque()  # taken from the queue and not processed yet: a segment's end
-        scheduler = self.server.scheduler
         while True:
             item = held.popleft() if held else self._queue.get()
             try:
@@ -356,11 +355,7 @@ class CommentatorStream:
                 if item is _STOP:
                     return
                 if transcriber is not None and not held:
-                    transcriber.period_s = scheduler.period
-                    if transcriber.due:
-                        with scheduler.turn():
-                            self._take_audio(transcriber, held)
-                            self._decode(transcriber)
+                    self._decode(transcriber, held)
             finally:
                 self._queue.task_done()
 
@@ -414,13 +409,22 @@ class CommentatorStream:
             finally:
                 self._queue.task_done()
 
-    def _decode(self, transcriber: Transcriber) -> None:
+    def _decode(self, transcriber: Transcriber, held: collections.deque[Any]) -> None:
+        """Decode if a decode is due, at the period the scheduler sets, in a turn on the GPU."""
+        scheduler = self.server.scheduler
         try:
-            self._deliver(transcriber.feed(np.zeros(0, dtype=np.float32)), transcriber)
+            transcriber.period_s = scheduler.period
+            if not transcriber.due:
+                return
+            with scheduler.turn():
+                self._take_audio(transcriber, held)
+                try:
+                    groups = transcriber.feed(np.zeros(0, dtype=np.float32))
+                finally:
+                    self.fed_s, self._buffered_s = self.fed_s + self._buffered_s, 0.0
+            self._deliver(groups, transcriber)
         except Exception as error:
             self._failed(error)
-        finally:
-            self.fed_s, self._buffered_s = self.fed_s + self._buffered_s, 0.0
 
     def _failed(self, error: Exception) -> None:
         log.exception("Transcription failed for %s", self.name)
