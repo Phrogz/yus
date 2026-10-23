@@ -1,0 +1,7 @@
+{
+  "players": [
+    {"team": "white", "descriptions": ["butler"], "player": "Stephen Butler"},
+    {"team": "dark", "descriptions": ["small gloves", "little gloves", "gloves", "joe"], "label": "small gloves"},
+    {"team": "dark", "descriptions": ["fluorescent shoes", "fluorescent", "fluorescent orange", "fluorescent orange shoes"], "label": "fluorescent shoes"}
+  ]
+}

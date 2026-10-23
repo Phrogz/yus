@@ -1,7 +1,7 @@
 # Event Extraction
 
-Event extraction turns a play-by-play transcript into game events: throws, defenses, and (not yet produced) substitutions and
-infractions. `yus.processing.event_extraction` does it with rules, live: it takes transcript groups as they arrive and
+Event extraction turns a play-by-play transcript into game events: throws, defenses and substitutions (infractions are not
+produced yet). `yus.processing.event_extraction` does it with rules, live: it takes transcript groups as they arrive and
 keeps an up-to-date event list. `yus.processing.evaluation` scores any event stream against ground truth.
 
 ```txt
@@ -45,7 +45,7 @@ from yus.processing.event_extraction import EventExtractor, extract_events
 
 stream = extract_events(transcript, game.teams)            # batch: EventStream
 
-extractor = EventExtractor(game.teams, timeout=6.0)        # live
+extractor = EventExtractor(game.teams, timeout=6.0)        # live; lineups=True: "on white we have ..." subs those players on
 for group in groups:                                       # as each TranscriptGroup arrives
     extractor.feed(group)
     final, provisional = extractor.events[: extractor.final_count], extractor.events[extractor.final_count :]
@@ -139,7 +139,9 @@ result.overall.f1, result.exact.f1, result.fields["receiver"].accuracy, result.r
    - When the throw is already finished, the groups since the state before it are parsed again with the change made when it
      finishes, so possession and the following events follow it. The change is kept by the event's time and its place in the
      list, so of two throws Whisper gave one start time, only the one meant changes.
-5. **Associations.** "X is Y" clauses ("oh, red shorts is kaia [on white]", several per sentence) are kept out of the event
+5. **Substitutions** ([below](#substitutions)). "pikachu subs off, blondie on", "close crop, emily off", "fulmer on for cynic":
+   names before a substitution word that ends its phrase.
+6. **Associations.** "X is Y" clauses ("oh, red shorts is kaia [on white]", several per sentence) are kept out of the event
    stream and recorded when they identify a roster player (see above). One that stands alone also takes the rest of its
    phrase with it when that holds no event, so "pikachu is killing it tonight" adds no player "tonight".
 
@@ -177,6 +179,89 @@ and has 104 events. The rules were tuned on dev only. Cells show event F1 / exac
   its only misses are timing shifts.
 - **Held-out phrasing probe:** 35 of 40 snippets of other commentators' phrasing pass. The probe comes from the spike and
   was not tuned on.
+
+## Substitutions
+
+Substitutions are `ultimate.Substitution` events: team, player as spoken, `sub_type` `sub_on` or `sub_off`.
+
+- **Phrases.** One or more names, then a substitution word: "subs on", "subbing off", "comes on", "subs out", or a bare "on" or
+  "off" ("Tanner off purple off mock on Dylan on", "Close crop, Emily off", "kaia is on"). Also "fulmer on for cynic" (cynic off),
+  "kaia off for white" (the team said), and "subbing on: ari and ben".
+  - The word must end the phrase: a boundary, the clause's end, "and", a correction, or the next substitution. "blue yellow on the
+    end zone for a score", "D-line comes on for dark" and "off the wall" substitute nobody.
+  - A name right after "to", "caught by", "picked up by" or a throw word is that event's: "backhand swing to 50, Tristan off" and
+    "Backhand swing close crop, Pikachu off" sub off only Tristan and Pikachu.
+  - Jersey numbers: digits above 20 are names everywhere ("flick to 26", "26 off"); a smaller number only right before the
+    substitution word ("5 off"). "Five to three" is still a score line.
+  - A name ending a group can start the next group's list ("Kyle" | "Fulmer on").
+  - "intended for cynic" is "to cynic" (a throw).
+  - An "on" ending a group is kept for the next group's team name ("picked up by blue on" | "dark") only right after a pickup or a
+    defense.
+- **Team.** The team said ("for white"), else `team_of` the name, else another name of the same list, else the team of a player
+  subbed off just before (within 10 s, nothing between: "Dylan off." | "Small gloves on."), which is also given to that player when
+  only the later one's team is known. `team_of` is what the commentary said ("picks up for dark"), the rosters, and then the team of
+  the name's last substitution. Throws' teams are not used: they follow possession, which misses turnovers nobody said. Otherwise
+  the team is `""`; the stats fill it in from the player's other events.
+  - `team_of` now also answers from substitutions, so a throw by someone subbed on for dark is evidence for dark. Without
+    substitutions nothing changes.
+  - "small gloves is joe", when small gloves was subbed on for dark and Joe is on white's roster, records no association: this Joe
+    plays for dark.
+- **Order and corrections.** A substitution said while a throw is still open waits behind it, so `events` stay in time order. A
+  group with substitutions waits for the next group, like a score. "Nope" right after a substitution (alone, or followed by one of
+  the same kind or player: "Dylan on." | "Nope." | "Dylan off, mock on.", "Kaia on. Sorry, Tristan on.") takes it back. "er" does
+  not.
+- **Line-ups.** With `lineups=True`, a line-up said for one team ("on white we have kaia, pikachu, tristan, glasses and short
+  crop") makes a substitution on for each name, at the time it was said. The team is the one said, or the one team all its names
+  are known on; "so we have Michelle's brother" makes none. "starts with" and "on the field" are line-up words too. It is off by
+  default because the bundled ground truth has no substitutions: on, its line-up adds 5 events there, and dev event F1 drops from
+  1.000 to 0.975 on the hand-made transcript and from 0.990 to 0.964 on Whisper's. Throws and defenses do not change either way. To
+  turn it on in `yus-serve` and `yus-game`, the bundled ground truth needs its 5 subs on at 20:30:47.6, and the session must pass
+  `lineups=True`.
+
+### Measured
+
+`tests/data/subbing_20250128T2050-*`: a 17-minute recording of another game (2025-01-28) whose commentator mostly narrates
+substitutions, with some play. Its Whisper transcript (`yus-transcribe`, no team files) has 191 groups. White is Dump & Drizzle; dark
+has no team file. The ground truth is a **draft** (`-draft-eventstream.json`, 177 substitutions, 77 throws, 7 defenses), labeled by
+Claude from the transcript and from short clips transcribed again with names in Whisper's prompt. Nobody has listened to it yet.
+
+| subbing transcript, names as spoken, no timeout | before | now |
+|---|---|---|
+| substitutions: precision / recall | — / 0.000 | 1.000 / 0.994 |
+| substitutions: team right / unknown / wrong | | 0.795 / 0.205 / 0 |
+| substitutions: player as spoken | | 0.824 (0.864 resolved with the game's descriptions) |
+| throws: event F1 / exact F1 | 0.920 / 0.333 | 0.940 / 0.403 |
+| throws: team right | 0.725 | 0.771 |
+
+- The one missed substitution is Whisper's "Cinecon" for "Cynic on". Every wrong player is a Whisper mishearing: "Sarayan",
+  "Sorayan" and "Ryan" (Serayan), "Steven" (resolves to Stephen Butler), "Mach" (mock), "Simic" (cynic), "Panner" (tanner),
+  "Kristen" (Tristan), "Wandi" (blondie), "Larson shoes" (fluorescent shoes), "25" (26?). Those of white's roster belong in its team
+  file as mondegreens; dark has no team file.
+- Unknown teams are dark's first substitutions, before the commentary says any dark name's team ("Dylan picks up for dark" at
+  20:53:52), and pairs of names nobody has placed yet.
+- The bundled game is unchanged: both of its transcripts give byte-identical events, with and without a timeout.
+- Streaming gives the same events as batch (timeouts none and 6 s), final events never change, and events stay in time order.
+
+### The draft ground truth
+
+Players are written as said, spelled correctly (Whisper's mishearings are extraction errors). Events marked `_unsure` in the file
+are guesses (times are the clock's minutes and seconds, 20:51:03 to 21:08:03):
+
+- 51:29.6 "tristan" subs on: Whisper's full decode heard "Kristen", two decodes of the clip "Tristan" (who subs off at 53:39).
+- 51:43.6 "kyle" on: said "Kyle, Fulmer on"; maybe a slip corrected to Fulmer.
+- 52:52.0 "butler" on is taken as Stephen Butler, who comes on again at 55:09 without going off.
+- 53:25.1 "26" on: Whisper heard "25" three times; 26 fits (white needs a player after "Emily off", and 26 catches at 53:36).
+- 53:35.8 and 54:06.9 "serayan": heard as "Ryan" and "So Ryan".
+- 53:37.1 receiver "50", heard once: a jersey number?
+- 00:48.2 "fluorescent shoes" on: heard as "Larson shoes".
+- 02:06.6 "Close crop, Emily off" with only "Pikachu on" after it: white would be one short.
+- 03:28.9 said "Dylan on. Nope. Dylan off, mock on.": there is no "dylan on".
+- Throws: outcomes not said (51:19.7 "intended for cynic", 53:56.9 Cody's huck: both labeled incomplete), 52:30.4 receiver "taylor"
+  (or "Turner"), 52:33.7 "Tanner in the end zone" taken as a goal, 57:26.1 "Steven Butler D's it. No deed. Caught by Tanner for a
+  score" (no D), 59:48.6 and 03:03.0 goals Whisper garbled, 00:05.6 "Backhand swing, dump, Steven" (swing or dump).
+
+The commentator also missed substitutions: players play while labeled off (Tristan at 02:15, Sebastian and Fulmer at 04:12, 26 at
+06:24, glasses at 07:01) or come on twice. Those are what was said, not labeling errors.
 
 ## Latency and cost
 
@@ -336,8 +421,12 @@ retracted score as a catch; the model's other gains have not been measured again
 - **The defender is lost when Whisper splits "deed" from "by X" across groups.**
 - **Unsure outcomes.** A throw to the end zone with no "caught" or "score", followed by a pickup by the other team, counts as
   incomplete.
-- **Jersey numbers.** These need "number twelve"; a bare "to 12" reads as a score line. No substitution or infraction
-  events are produced, and the ground truth has none.
+- **Jersey numbers.** Numbers up to 20 need "number twelve" outside a substitution: a bare "to 12" reads as a score line. No
+  infraction events are produced.
+- **Substitutions.** Only this commentator's phrasings were seen, all of the form "X off, Y on". Whisper's mishearings of names
+  split one player into several ("Sarayan", "Sorayan"), which breaks on-field tracking until the team file lists them. The LLM
+  assistant (`--llm`) cannot describe a substitution to the model yet: `llm.event_json` asserts on one, so `--llm` with
+  substitutions fails.
 - **Old transcripts.** Whisper's "the ends of" for "to the end zone" (twice in dev) is now a mondegreen of the sport
   (`yus/sports/ultimate`), replaced when the transcript is made. A transcript made before that still says "the ends of", and
   the extractor no longer reads it as the end zone.

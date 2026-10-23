@@ -6,6 +6,9 @@ nicknames and mondegreens, and names the commentator announced) are matched as w
 also with a possessive ("adam federbusch's huck"). Common words that are not names (STOPWORDS: "the disc", "alright", "team") are
 fillers.
 Punctuation from the ASR splits names and marks clause boundaries: "." "?" "!" and ";" end a sentence, "," and ":" are weak.
+Substitution words ("subs off", a bare "on" or "off") are tagged SUB wherever they are said; the extractor decides from what is
+around them whether they substitute anyone ("pikachu off, blondie on") or are filler ("blue yellow on the end zone").
+Numbers written as digits above 20 are jersey numbers, so names ("flick to 26"); smaller ones are scores.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import unicodedata
 from collections.abc import Iterable
 
 import yus
-from yus.sports.ultimate import ThrowDirection, ThrowType
+from yus.sports.ultimate import SubType, ThrowDirection, ThrowType
 
 
 class Tag(enum.Enum):
@@ -44,6 +47,8 @@ class Tag(enum.Enum):
     PULL = "pull"
     HAS = "has it"
     LINEUP = "line-up"
+    SUB = "substitution word"  # value: SubType; "subs on", "off"
+    SUBST = "substitution"  # made by the extractor from SUB words and the names they go with; value: its substitutions
     IS = "is"  # "red shorts is kaia"
     CORRECT = "correction"  # "to tristan, sorry, to joe", "nope", "that wasn't joe"
     UNK = "unknown player"
@@ -91,7 +96,7 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.DIR, "huck|hucks|hucked|hucking|put|puts|puts it|bomb|bombs", ThrowDirection.HUCK)  # "put" is a long throw: "hammer put"
     add(Tag.DIR, "up the line|up line|upline|up the sideline", ThrowDirection.UP_LINE)
     add(Tag.DIR, "cross field|crossfield|across the field", ThrowDirection.CROSS_FIELD)
-    add(Tag.TO, "to|over to|into")
+    add(Tag.TO, "to|over to|into|intended for|meant for")
     add(Tag.THROWV, "throws|throws it|passes|passes it|finds|hits|looks to|looking to|looks for|looking for")
     add(Tag.CAUGHT, "caught by|catch by|caught|catches|grabbed by|grab by|hauled in by|reeled in by|received by|makes the catch|make the catch|with the catch")
     add(Tag.SCORE, "for a score|for the score|for a goal|for the goal|for a point|for the point|scores|score|goal|touchdown")
@@ -122,6 +127,9 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.HAS, "gets it|has it|grabs it|got it|has the disc|gets the disc")
     add(Tag.LINEUP, "we have|we've got|we got|on the line|line up|lineup|here's the line")
     add(Tag.LINEUP, "d line|o line|d lines|o lines|the d line|the o line|with the d line|on the d line|on d line|on o line|on the o line")  # not "the d"
+    add(Tag.LINEUP, "starts with|starting with|start with|starting line|starting lineup|on the field|on the floor")
+    add(Tag.SUB, "on|back on|subs on|sub on|subbing on|subbed on|subs in|sub in|subbing in|subbed in|comes on|coming on|comes back on|comes in|coming in", SubType.SUB_ON)
+    add(Tag.SUB, "off|subs off|sub off|subbing off|subbed off|subs out|sub out|subbing out|subbed out|comes off|coming off|goes off|going off|heads off", SubType.SUB_OFF)
     add(Tag.CORRECT, "sorry|i mean|no wait|wait no|correction|or rather|my bad|my mistake|scratch that|nope|no|actually|er|wait|oops|whoops")
     add(Tag.IS, "is|is actually|is really|is named|is called|name is")
     add(Tag.UNK, "somebody|someone|some one|some body|i dunno|i don't know|dunno|don't know|unknown|who knows|not sure|nobody")
@@ -150,6 +158,7 @@ corner corners sideline middle field side space lane area air ground hand hands
 """.split()
 )
 
+MAX_SCORE = 20  # a number above this, said as digits, is a jersey number ("flick to 26"), not a score
 _NUMBER_WORDS = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten"}
 _PIECE = re.compile(r"[^\W_]+(?:'[^\W_]+)*")  # letters (any script) and digits, with inner apostrophes: "d'd", "josé"
 _STRONG = re.compile(r"[.!?;…]")
@@ -253,7 +262,7 @@ class Tagger:
         if word in ("number", "numero") and limit > 1 and (texts[1].isdigit() or self.phrases.get(texts[1:2], (None,))[0] is Tag.NUM):
             return 2, Tag.NAME, " ".join(texts[:2])  # a jersey number: "number twelve"
         if word.isdigit():
-            return 1, Tag.NUM, int(word)
+            return (1, Tag.NAME, word) if int(word) > MAX_SCORE else (1, Tag.NUM, int(word))
         if word in STOPWORDS:
             return 1, Tag.FILLER, None
         return 0, Tag.NAME, None

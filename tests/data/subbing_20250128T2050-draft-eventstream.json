@@ -1,0 +1,2312 @@
+{
+  "_note": "DRAFT ground truth for the owner to verify: labeled by Claude (October 2026) from the Whisper transcript subbing_20250128T2050-whisper-turbo.json and re-transcriptions of short clips of the recording; nobody has listened to it. Names as spoken (correct spellings of what was said, not Whisper's mishearings). White is Dump & Drizzle; dark has no roster. Events marked '_unsure' are guesses; docs/extraction.md#substitutions lists them.",
+  "events": [
+    {
+      "when": "2025-01-28T20:51:03.700000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:05.300000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:08.100000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:10.900000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:13.300000",
+      "team": "dark",
+      "player": "sebastian",
+      "intercepted": true,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T20:51:19.700000",
+      "team": "dark",
+      "player": "sebastian",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": "cynic",
+      "completed": false,
+      "scored": false,
+      "hit_wall": true,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "outcome not said ('off the wall, intended for cynic'): labeled incomplete"
+    },
+    {
+      "when": "2025-01-28T20:51:28.100000",
+      "team": "white",
+      "player": "stephen butler",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:29.600000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "Whisper's full decode heard 'Kristen'; two decodes of the clip heard 'Tristan', who subs off at 53:39"
+    },
+    {
+      "when": "2025-01-28T20:51:30.800000",
+      "team": "dark",
+      "player": "sebastian",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:41.800000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:43.600000",
+      "team": "dark",
+      "player": "kyle",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "said 'Kyle, Fulmer on' (Whisper split 'Kyle' into its own group); could be a slip corrected to Fulmer"
+    },
+    {
+      "when": "2025-01-28T20:51:45.300000",
+      "team": "dark",
+      "player": "fulmer",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:53.400000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:51:55.200000",
+      "team": "white",
+      "player": "whitlock",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:09.900000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:11.500000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:18.500000",
+      "team": "dark",
+      "player": "little gloves",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:20.700000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:28.200000",
+      "team": "dark",
+      "player": "tanner",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "fulmer",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:52:30.400000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "taylor",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "receiver heard as 'Taylor' or 'Turner'; may be another dark player"
+    },
+    {
+      "when": "2025-01-28T20:52:32.100000",
+      "team": "dark",
+      "player": "taylor",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "mock",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:52:33.700000",
+      "team": "dark",
+      "player": "mock",
+      "type": "backhand",
+      "direction": "huck",
+      "receiver": "tanner",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "'Tanner in the end zone' without 'for a score': labeled a goal (white scores next)"
+    },
+    {
+      "when": "2025-01-28T20:52:37",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:38.300000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:39.800000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:41.100000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:50.200000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:52",
+      "team": "white",
+      "player": "butler",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "'Butler on' taken as Stephen Butler, who subs on again at 55:09 without going off"
+    },
+    {
+      "when": "2025-01-28T20:52:53.700000",
+      "team": "white",
+      "player": null,
+      "type": null,
+      "direction": null,
+      "receiver": "glasses",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:52:55.400000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:56.300000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:58",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:52:59.300000",
+      "team": "dark",
+      "player": "sebastian",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:05.800000",
+      "team": "dark",
+      "player": "fulmer",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:07.100000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:20.300000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:25.100000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "Whisper heard '25' in three decodes; 26 fits: white needs one on after 'Emily off', and 26 catches at 53:36"
+    },
+    {
+      "when": "2025-01-28T20:53:26.400000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:27.300000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:35.800000",
+      "team": "white",
+      "player": "serayan",
+      "type": "flick",
+      "direction": null,
+      "receiver": "26",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "thrower heard as 'Ryan'; a decode with names in the prompt heard 'Sarayan'"
+    },
+    {
+      "when": "2025-01-28T20:53:37.100000",
+      "team": "white",
+      "player": "26",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "50",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "receiver '50', heard once; a jersey number?"
+    },
+    {
+      "when": "2025-01-28T20:53:39",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:39.700000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:53:50.200000",
+      "team": "white",
+      "player": "50",
+      "type": null,
+      "direction": "cross_field",
+      "receiver": "blondie",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:53:55.200000",
+      "team": "dark",
+      "player": "dylan",
+      "type": "flick",
+      "direction": "swing",
+      "receiver": "cody",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:53:56.900000",
+      "team": "dark",
+      "player": "cody",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": null,
+      "completed": false,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "outcome of Cody's huck not said: labeled incomplete (white scores next)"
+    },
+    {
+      "when": "2025-01-28T20:53:58.400000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:00.200000",
+      "team": "dark",
+      "player": "small gloves",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:06.900000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "heard as 'So Ryan off'"
+    },
+    {
+      "when": "2025-01-28T20:54:08.200000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:21.800000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:22.600000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:26.300000",
+      "team": "white",
+      "player": null,
+      "type": null,
+      "direction": null,
+      "receiver": "26",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:54:29.700000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:30.500000",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:53.100000",
+      "team": "dark",
+      "player": "tanner",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:54.200000",
+      "team": "dark",
+      "player": "fulmer",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:54:59.200000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:00.500000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:05.900000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:07.400000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:08.200000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:09.600000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:18.100000",
+      "team": "white",
+      "player": "stephen",
+      "type": "flick",
+      "direction": null,
+      "receiver": "serayan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:55:20.500000",
+      "team": "white",
+      "player": "serayan",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "emily",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:55:22.300000",
+      "team": "white",
+      "player": "emily",
+      "type": "flick",
+      "direction": "swing",
+      "receiver": "close crop",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:55:25.400000",
+      "team": "white",
+      "player": "close crop",
+      "type": "scoober",
+      "direction": null,
+      "receiver": "serayan",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:55:29.900000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:32.300000",
+      "team": "dark",
+      "player": "fluorescent",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:33.700000",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:34.500000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:35.700000",
+      "team": "dark",
+      "player": "sebastian",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:36.500000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:43.100000",
+      "team": "white",
+      "player": "stephen butler",
+      "intercepted": false,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T20:55:48.800000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:49.700000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:50.300000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:51",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:57.900000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:55:59.200000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:02.200000",
+      "team": "dark",
+      "player": "small gloves",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:03.500000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:17.800000",
+      "team": "dark",
+      "player": "mock",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "fluorescent shoes",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:20.600000",
+      "team": "dark",
+      "player": "fluorescent shoes",
+      "type": "flick",
+      "direction": null,
+      "receiver": "mock",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:23.300000",
+      "team": "dark",
+      "player": "mock",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "fluorescent shoes",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:26.900000",
+      "team": "dark",
+      "player": "fluorescent shoes",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "fulmer",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:29.700000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "mock",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:32.900000",
+      "team": "dark",
+      "player": "mock",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "fulmer",
+      "completed": false,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:37.300000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:39.300000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:40.400000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:41.500000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:47.500000",
+      "team": "white",
+      "player": "26",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": "glasses",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:56:50.600000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:51.600000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:54.200000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:55.500000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:57.700000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:56:59.900000",
+      "team": "dark",
+      "player": "tanner",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:03.500000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:18.700000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:19.700000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:24.400000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "flick",
+      "direction": null,
+      "receiver": "cody",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:57:26.100000",
+      "team": "dark",
+      "player": "cody",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": "tanner",
+      "completed": true,
+      "scored": true,
+      "hit_wall": true,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "'Flick, huck, cross field' (direction huck); 'Steven Butler D's it off the wall. No deed.' retracts the D; Whisper 'Cop, I tender for a score' is 'caught by Tanner for a score'"
+    },
+    {
+      "when": "2025-01-28T20:57:34.700000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:35.600000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:37.200000",
+      "team": "dark",
+      "player": "fluorescent orange",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:38.400000",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:46.600000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:47.600000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:57:57.100000",
+      "team": "white",
+      "player": null,
+      "type": "flick",
+      "direction": null,
+      "receiver": "26",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:58:03.400000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "cody",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:58:05.200000",
+      "team": "dark",
+      "player": "cody",
+      "type": "flick",
+      "direction": null,
+      "receiver": "purple",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:58:09.100000",
+      "team": "dark",
+      "player": "purple",
+      "type": "backhand",
+      "direction": "dump",
+      "receiver": "cody",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:58:11.200000",
+      "team": "dark",
+      "player": "cody",
+      "type": "flick",
+      "direction": null,
+      "receiver": "tanner",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:58:14.700000",
+      "team": "dark",
+      "player": "tanner",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "purple",
+      "completed": false,
+      "scored": false,
+      "hit_wall": true,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:58:20.900000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:21.900000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:35",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:36.400000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:37.900000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:38.700000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:48.300000",
+      "team": "dark",
+      "player": "sebastian",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:55.900000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:58:56.900000",
+      "team": "dark",
+      "player": "small gloves",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:07",
+      "team": "dark",
+      "player": null,
+      "type": "flick",
+      "direction": null,
+      "receiver": "fulmer",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:59:08.100000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "tanner",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:59:10.600000",
+      "team": "dark",
+      "player": "tanner",
+      "type": "flick",
+      "direction": "up_line",
+      "receiver": "fulmer",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T20:59:14.400000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:15.200000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:16.100000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:16.800000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:26.600000",
+      "team": "dark",
+      "player": "tanner",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:27.700000",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:28.400000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:29.100000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:48.600000",
+      "team": "dark",
+      "player": null,
+      "type": "backhand",
+      "direction": null,
+      "receiver": "dylan",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "Whisper 'back in Dylan in the end zone first score'; a decode of the clip: 'Backhand to Dylan in the end zone for a score'"
+    },
+    {
+      "when": "2025-01-28T20:59:53.100000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:54.200000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T20:59:58.300000",
+      "team": "white",
+      "player": "stephen",
+      "type": "flick",
+      "direction": "swing",
+      "receiver": "tristan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:00.200000",
+      "team": "white",
+      "player": "tristan",
+      "type": "flick",
+      "direction": "swing",
+      "receiver": "blondie",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:02.100000",
+      "team": "white",
+      "player": "blondie",
+      "type": "flick",
+      "direction": null,
+      "receiver": "close crop",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:05.600000",
+      "team": "white",
+      "player": "close crop",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "stephen",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "'Backhand swing, dump, Steven': direction swing or dump"
+    },
+    {
+      "when": "2025-01-28T21:00:07.900000",
+      "team": "white",
+      "player": "stephen",
+      "type": "flick",
+      "direction": null,
+      "receiver": "tristan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:10.100000",
+      "team": "white",
+      "player": "tristan",
+      "type": "flick",
+      "direction": "up_line",
+      "receiver": "blondie",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:11.200000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:12.500000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:16.500000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:17.200000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:18.700000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:19.600000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:44.600000",
+      "team": "dark",
+      "player": null,
+      "type": null,
+      "direction": null,
+      "receiver": "sebastian",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:46.800000",
+      "team": "dark",
+      "player": "joe",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:48.200000",
+      "team": "dark",
+      "player": "fluorescent shoes",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "heard as 'Larson shoes on'; fluorescent shoes is off since 57:37 and scores at 02:01"
+    },
+    {
+      "when": "2025-01-28T21:00:49.200000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:52.500000",
+      "team": "dark",
+      "player": "blue yellow",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:53.800000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:54.900000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:00:57",
+      "team": "white",
+      "player": "tristan",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "26",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:00:58.500000",
+      "team": "white",
+      "player": "26",
+      "type": "flick",
+      "direction": "swing",
+      "receiver": "close crop",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:01:01.100000",
+      "team": "white",
+      "player": "close crop",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "tristan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:01:08.700000",
+      "team": "white",
+      "player": "tristan",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "close crop",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:01:11.100000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:11.900000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:13.100000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:14.300000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:31.400000",
+      "team": "white",
+      "player": null,
+      "type": "flick",
+      "direction": null,
+      "receiver": "serayan",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:01:36.800000",
+      "team": "dark",
+      "player": "sebastian",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:37.600000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:40.100000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:41.100000",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:44.800000",
+      "team": "dark",
+      "player": "fulmer",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:45.800000",
+      "team": "dark",
+      "player": "tanner",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:56.200000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:01:57.300000",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:01",
+      "team": "dark",
+      "player": null,
+      "type": "backhand",
+      "direction": null,
+      "receiver": "fluorescent orange shoes",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:04.200000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:05.100000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:06.600000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "'Close crop, Emily off' then only 'Pikachu on': white would be one short"
+    },
+    {
+      "when": "2025-01-28T21:02:07.300000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:07.800000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:15.600000",
+      "team": "white",
+      "player": "tristan",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "blondie",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:16.700000",
+      "team": "white",
+      "player": "blondie",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "tristan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:17.600000",
+      "team": "white",
+      "player": "tristan",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "glasses",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:19.900000",
+      "team": "white",
+      "player": "glasses",
+      "type": "backhand",
+      "direction": "huck",
+      "receiver": "tristan",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:23.800000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:24.500000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:26.500000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:27.900000",
+      "team": "dark",
+      "player": "blue yellow",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:36.900000",
+      "team": "white",
+      "player": "serayan",
+      "intercepted": true,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T21:02:39.100000",
+      "team": "white",
+      "player": "serayan",
+      "type": "flick",
+      "direction": null,
+      "receiver": "tristan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:41",
+      "team": "white",
+      "player": "tristan",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "pikachu",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:43.600000",
+      "team": "white",
+      "player": "pikachu",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "tristan",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:46.400000",
+      "team": "white",
+      "player": "tristan",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "blondie",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:02:49.600000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:51",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:55.400000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:02:57.100000",
+      "team": "dark",
+      "player": "joe",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:03",
+      "team": "dark",
+      "player": null,
+      "type": null,
+      "direction": "huck",
+      "receiver": "joe",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw",
+      "_unsure": "'From a cuck to Joe in the end zone for a score': a huck to dark's Joe (small gloves); 26 picks up for white after"
+    },
+    {
+      "when": "2025-01-28T21:03:11",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:11.600000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:12.400000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:13.300000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:14.700000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:16",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:19.600000",
+      "team": "white",
+      "player": "glasses",
+      "type": "hammer",
+      "direction": null,
+      "receiver": "stephen",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:03:28.900000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution",
+      "_unsure": "said 'Dylan on. Nope. Dylan off, mock on.': no 'Dylan on'"
+    },
+    {
+      "when": "2025-01-28T21:03:29.800000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:40.700000",
+      "team": "white",
+      "player": "close crop",
+      "intercepted": false,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T21:03:44.300000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:45.500000",
+      "team": "white",
+      "player": "tristan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:03:59.700000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:04:01.200000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:04:05.100000",
+      "team": "dark",
+      "player": "tanner",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:04:06.300000",
+      "team": "dark",
+      "player": "kyle",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:04:13.300000",
+      "team": "dark",
+      "player": "sebastian",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "fulmer",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:04:15.900000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "sebastian",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:04:18.900000",
+      "team": "dark",
+      "player": "sebastian",
+      "type": "flick",
+      "direction": "dump",
+      "receiver": "fulmer",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:04:21.300000",
+      "team": "dark",
+      "player": "fulmer",
+      "type": "backhand",
+      "direction": null,
+      "receiver": null,
+      "completed": false,
+      "scored": false,
+      "hit_wall": true,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:04:27.400000",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:04:28.900000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:17.300000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:19.100000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:21.800000",
+      "team": "dark",
+      "player": "joe",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:22.600000",
+      "team": "dark",
+      "player": "cynic",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:23.800000",
+      "team": "dark",
+      "player": "fluorescent orange",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:25.200000",
+      "team": "dark",
+      "player": "blue yellow",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:38.100000",
+      "team": "dark",
+      "player": "sebastian",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": "blue yellow",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:05:42",
+      "team": "white",
+      "player": "glasses",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:44.200000",
+      "team": "white",
+      "player": "stephen",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:45.200000",
+      "team": "dark",
+      "player": "sebastian",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:05:46.500000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:08.700000",
+      "team": "dark",
+      "player": null,
+      "type": null,
+      "direction": null,
+      "receiver": "cody",
+      "completed": true,
+      "scored": true,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:06:10.400000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:10.900000",
+      "team": "white",
+      "player": "pikachu",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:11.900000",
+      "team": "dark",
+      "player": "mock",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:12.600000",
+      "team": "dark",
+      "player": "dylan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:14.200000",
+      "team": "white",
+      "player": "close crop",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:14.900000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:23.800000",
+      "team": "white",
+      "player": "stephen",
+      "type": "flick",
+      "direction": null,
+      "receiver": "26",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:06:26.900000",
+      "team": "white",
+      "player": "26",
+      "type": "backhand",
+      "direction": "dump",
+      "receiver": "stephen",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:06:29.500000",
+      "team": "white",
+      "player": "stephen",
+      "type": "flick",
+      "direction": null,
+      "receiver": "pikachu",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:06:31.800000",
+      "team": "white",
+      "player": "pikachu",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": null,
+      "completed": false,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": true,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:06:36.100000",
+      "team": "dark",
+      "player": "cynic",
+      "intercepted": false,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T21:06:38.200000",
+      "team": "dark",
+      "player": "cody",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:39.100000",
+      "team": "dark",
+      "player": "purple",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:06:49.300000",
+      "team": "white",
+      "player": "stephen",
+      "intercepted": false,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T21:07:00.900000",
+      "team": "white",
+      "player": "pikachu",
+      "type": "flick",
+      "direction": null,
+      "receiver": "glasses",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:05.700000",
+      "team": "white",
+      "player": "glasses",
+      "type": null,
+      "direction": "dump",
+      "receiver": "stephen",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:12.200000",
+      "team": "white",
+      "player": "stephen",
+      "type": "flick",
+      "direction": "huck",
+      "receiver": null,
+      "completed": false,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:15.400000",
+      "team": "dark",
+      "player": "purple",
+      "intercepted": false,
+      "__type__": "ultimate.Defense"
+    },
+    {
+      "when": "2025-01-28T21:07:20.700000",
+      "team": "white",
+      "player": "serayan",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:07:21.800000",
+      "team": "white",
+      "player": "blondie",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:07:35",
+      "team": "white",
+      "player": "26",
+      "sub_type": "sub_off",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:07:36.100000",
+      "team": "white",
+      "player": "emily",
+      "sub_type": "sub_on",
+      "__type__": "ultimate.Substitution"
+    },
+    {
+      "when": "2025-01-28T21:07:45.900000",
+      "team": "white",
+      "player": "stephen",
+      "type": "backhand",
+      "direction": null,
+      "receiver": "emily",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:47.800000",
+      "team": "white",
+      "player": "emily",
+      "type": "backhand",
+      "direction": "dump",
+      "receiver": "pikachu",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:50.300000",
+      "team": "white",
+      "player": "pikachu",
+      "type": "backhand",
+      "direction": "swing",
+      "receiver": "emily",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:52.600000",
+      "team": "white",
+      "player": "emily",
+      "type": "flick",
+      "direction": null,
+      "receiver": "blondie",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:55.700000",
+      "team": "white",
+      "player": "blondie",
+      "type": "flick",
+      "direction": null,
+      "receiver": "stephen",
+      "completed": true,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    },
+    {
+      "when": "2025-01-28T21:07:58.900000",
+      "team": "white",
+      "player": "stephen",
+      "type": "hammer",
+      "direction": null,
+      "receiver": null,
+      "completed": false,
+      "scored": false,
+      "hit_wall": false,
+      "hit_net": false,
+      "__type__": "indoor.Throw"
+    }
+  ]
+}
