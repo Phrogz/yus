@@ -24,6 +24,7 @@ import concurrent.futures
 import dataclasses
 import datetime as dt
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,8 @@ from yus.processing.event_extraction.lexicon import Item, Tag
 from yus.processing.event_unification.players import normalize
 from yus.sports import ultimate
 from yus.sports.ultimate import ThrowDirection, ThrowType, indoor
+
+log = logging.getLogger(__name__)
 
 DEFAULT_URL = "http://localhost:11434"
 DEFAULT_BUDGET = 10.0  # seconds a group's events wait for the model before the rule events stand
@@ -356,9 +359,10 @@ def parse_answer(content: str, request: Request) -> list[yus.Event] | None:
 
 def _check_edit(events: list[yus.Event], request: Request) -> None:
     """Raise InvalidAnswer unless the answer changes only what the reasons for asking allow. A correction allows anything. A name
-    no event used, or throw words that made none, allows changing any event and adding events, but not dropping one. A new name
-    allows changing the events that name it, and dropping one it threw ("flick wobbles to joe" made two throws). A restated throw
-    allows merging the pair. Every other event must stay as it was, and no defense may appear without a defense word."""
+    no event used, or throw words that made none, allows changing any event but not dropping one; only throw words that made
+    none allow adding events. A new name allows changing the events that name it, and dropping one it threw ("flick wobbles to
+    joe" made two throws). A restated throw allows merging the pair. Every other event must stay as it was, and no defense may
+    appear without a defense word."""
     parser = request.events
     kinds = {reason.split('"')[0].strip() for reason in request.reasons}
     new = {normalize(name) for reason in request.reasons if reason.startswith(NEW_NAME) for name in reason.split('"')[1::2]}
@@ -378,7 +382,7 @@ def _check_edit(events: list[yus.Event], request: Request) -> None:
             raise InvalidAnswer(f"changed event {k + 1}, which {'; '.join(request.reasons)} does not concern")
     if len(events) < len(parser) - len(droppable):
         raise InvalidAnswer(f"dropped events ({len(parser)} -> {len(events)}) for {'; '.join(request.reasons)}")
-    if len(events) > len(parser) and not kinds & {CORRECTION, UNUSED, NO_EVENT}:
+    if len(events) > len(parser) and not kinds & {CORRECTION, NO_EVENT}:
         raise InvalidAnswer(f"added events ({len(parser)} -> {len(events)}) for {'; '.join(request.reasons)}")
     defenses = sum(isinstance(event, ultimate.Defense) for event in events)
     if defenses > max(sum(isinstance(event, ultimate.Defense) for event in parser), request.defense_words):
@@ -728,8 +732,13 @@ class AssistedExtractor:
     def _resolve(self, entry: _Entry, outcome: str) -> None:
         entry.resolved, entry.base = True, None
         self.answers[entry.index] = entry.revision
-        if entry.call is not None and entry.call.outcome == "waiting":
-            entry.call.outcome = outcome
+        call = entry.call
+        if call is not None and call.outcome == "waiting":
+            call.outcome = outcome
+        if call is not None and self.assistant is not None:
+            took = f" in {call.latency:.1f} s" if call.latency is not None else ""
+            level = logging.WARNING if call.outcome == "error" else logging.INFO
+            log.log(level, "LLM %s: group %d (%s) %s%s%s", self.assistant.model, call.group, "; ".join(call.reasons), call.outcome, took, f": {call.error}" if call.error else "")
 
     def _replay(self, entry: _Entry) -> None:
         """Parse the groups again from `entry` on (from the state kept before it), with its revision. Groups before it are all

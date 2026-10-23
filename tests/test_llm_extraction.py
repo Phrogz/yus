@@ -181,6 +181,8 @@ def test_answers_that_do_not_check_out_keep_the_rule_events(teams: list[yus.Team
         ([FIRST, "flick to joe backhand to red shorts"], '{"correct":false,"events":[{"same":1}]}'),
         # ... nor adding one
         ([FIRST, "backhand to red shorts"], '{"correct":false,"events":[{"same":1},{"kind":"throw","team":"white","player":"red shorts","receiver":null}]}'),
+        # ... and a name no event used does not make a throw of its own ("Glasses picks it up the way.")
+        ([FIRST, "flick to joe. glasses picks it up the way"], '{"correct":false,"events":[{"same":1},{"kind":"throw","team":"white","player":"glasses","receiver":null}]}'),
         # no defense without a defense word
         ([FIRST, "kaia's throw is dropped by tristan"], '{"correct":false,"events":[{"kind":"defense","team":"dark","player":"tristan"}]}'),
     ],
