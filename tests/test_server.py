@@ -495,6 +495,34 @@ def test_two_commentators_decode_less_often_than_one(game):
         assert max(factory.made, key=lambda t: t.samples).period_s == 3.0
 
 
+class Stubborn(FakeTranscriber):
+    """Refuses the decode period the server sets."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.made = True
+
+    @property
+    def period_s(self) -> float:
+        return 3.0
+
+    @period_s.setter
+    def period_s(self, value: float) -> None:
+        if getattr(self, "made", False):
+            raise ValueError("no period for me")
+
+
+def test_a_transcriber_that_refuses_the_period_reports_an_error(game):
+    server = make_server(game, None, lambda start, rate: Stubborn(start, rate, PHRASES))
+    with client_for(server) as client, client.websocket_connect("/ws/audio") as ws:
+        ws.send_json(hello())
+        ws.receive_json()
+        send_audio(ws, 0, 5)
+        assert receive_until(ws, lambda m: m.get("error"))["error"] == "ValueError: no period for me"
+        send_audio(ws, 5, 5)
+        receive_until(ws, lambda m: m.get("ack") == 9 and not m["busy"])  # the worker goes on
+
+
 def test_state_cache_stays_small(game, tmp_path):
     server = make_server(game, tmp_path, Factory())
     with client_for(server) as client:
