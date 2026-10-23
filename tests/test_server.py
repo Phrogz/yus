@@ -22,7 +22,7 @@ import yus
 from tests.data.gruindoor_20250114T2030 import TEAM_FILES, build_game
 from yus.session import GameSession
 from yus.web import replay
-from yus.web.server import FRAME, GameServer, build_arg_parser, create_app, event_text, open_session
+from yus.web.server import FRAME, DecodeScheduler, GameServer, build_arg_parser, create_app, event_text, open_session
 from yus.sports import ultimate
 
 with warnings.catch_warnings():  # starlette's TestClient prefers httpx2 to the installed httpx
@@ -36,13 +36,17 @@ PHRASES = ["black pulls", "picked up by pikachu", "backhand to glasses", "scoobe
 
 
 class FakeTranscriber:
-    """Says the next scripted phrase as a group for every `every` seconds of audio fed, as if heard at that time."""
+    """Says the next scripted phrase as a group for every `every` seconds of audio decoded, as if heard at that time. Any audio
+    not decoded yet makes a decode due."""
 
     def __init__(self, start: dt.datetime, sample_rate: int, phrases: list[str], every: float = 1.0):
         self.start, self.sample_rate, self.phrases, self.every = start, sample_rate, phrases, every
+        self.period_s = 3.0
         self.samples = 0
+        self.decoded = 0
         self.said = 0
         self.feeds: list[np.ndarray] = []
+        self.decodes: list[int] = []  # samples decoded by each decode
         self.flushed = False
 
     @property
@@ -61,12 +65,20 @@ class FakeTranscriber:
     def horizon(self) -> dt.datetime:
         return self.start + dt.timedelta(seconds=self.said * self.every)
 
-    def feed(self, samples: np.ndarray) -> list[yus.TranscriptGroup]:
+    @property
+    def due(self) -> bool:
+        return self.samples > self.decoded
+
+    def feed(self, samples: np.ndarray, decode: bool = True) -> list[yus.TranscriptGroup]:
         assert samples.dtype == np.float32
         self.samples += len(samples)
         self.feeds.append(samples)
+        if not decode:
+            return []
+        self.decodes.append(self.samples - self.decoded)
+        self.decoded = self.samples
         groups = []
-        while self.said < len(self.phrases) and (self.said + 1) * self.every <= self.audio_s:
+        while self.said < len(self.phrases) and (self.said + 1) * self.every <= self.decoded / self.sample_rate:
             groups.append(self._group(self.said))
             self.said += 1
         return groups
@@ -408,6 +420,81 @@ def test_phone_times_that_cannot_be_right_are_not_used(game):
     assert all(t.samples == 2 * 1600 for t in factory.made)
 
 
+def test_decode_turns_are_taken_one_at_a_time_in_the_order_asked():
+    scheduler = DecodeScheduler()
+    taken: list[str] = []
+
+    def decode(name: str) -> None:
+        with scheduler.turn():
+            taken.append(f"{name} in")
+            time.sleep(0.01)
+            taken.append(f"{name} out")
+
+    with scheduler.turn():
+        threads = []
+        for name in "ABC":
+            threads.append(threading.Thread(target=decode, args=(name,)))
+            threads[-1].start()
+            wait_until(lambda: len(scheduler._waiting) == len(threads) + 1)
+    for thread in threads:
+        thread.join(5)
+    assert taken == ["A in", "A out", "B in", "B out", "C in", "C out"] and scheduler.busy_s > 0.03
+
+
+def test_the_decode_period_grows_with_the_commentators_live():
+    scheduler = DecodeScheduler(3.0, 2.25)
+    periods = [scheduler.period]
+    for name in "ABC":
+        scheduler.started(name)
+        periods.append(scheduler.period)
+    scheduler.ended("B")
+    assert periods + [scheduler.period] == [3.0, 3.0, 4.5, 6.75, 4.5]
+    for name in "DEFGH":
+        scheduler.started(name)
+    assert scheduler.period == 15.0  # LiveTranscriber's limit
+    for period, each in [(0.0, 2.0), (16.0, 2.0), (3.0, -1.0)]:
+        with pytest.raises(ValueError):
+            DecodeScheduler(period, each)
+    args = build_arg_parser().parse_args(["--period", "2.5", "--period-per-commentator", "2", "--skip-silence"])
+    assert (args.period, args.period_per_commentator, args.skip_silence) == (2.5, 2.0, True)
+
+
+def test_a_decode_waits_for_its_turn_then_takes_all_the_audio_that_came(game):
+    """While another commentator's decode runs, the audio that arrives waits, and the next decode takes all of it."""
+    factory = Factory()
+    server = make_server(game, None, factory)
+    with client_for(server) as client, client.websocket_connect("/ws/audio") as ws:
+        ws.send_json(hello())
+        ws.receive_json()
+        with server.scheduler.turn():
+            send_audio(ws, 0, 10)
+            receive_until(ws, lambda m: m.get("ack") == 9)
+            wait_until(lambda: len(server.scheduler._waiting) == 2)
+            assert factory.made[0].decodes == [] and server.streams["Gavin"].backlog_s == pytest.approx(1.0)
+        receive_until(ws, lambda m: not m["busy"] and m["backlog_s"] == 0)
+        assert factory.made[0].decodes == [10 * 1600] and factory.made[0].said == 1
+
+
+def test_two_commentators_decode_less_often_than_one(game):
+    factory = Factory()
+    server = make_server(game, None, factory)
+    with client_for(server) as client, client.websocket_connect("/ws/audio") as a, client.websocket_connect("/ws/audio") as b:
+        for ws, name in [(a, "A"), (b, "B")]:
+            ws.send_json(hello(name))
+            ws.receive_json()
+            send_audio(ws, 0, 5)
+            receive_until(ws, lambda m: m.get("ack") == 4)
+        wait_until(lambda: server.scheduler.live == 2)
+        send_audio(a, 5, 5)
+        receive_until(a, lambda m: m.get("ack") == 9 and not m["busy"])
+        assert max(factory.made, key=lambda t: t.samples).period_s == 4.5  # A's
+        b.send_json({"type": "stop"})
+        wait_until(lambda: server.scheduler.live == 1)
+        send_audio(a, 10, 5)
+        receive_until(a, lambda m: m.get("ack") == 14 and not m["busy"])
+        assert max(factory.made, key=lambda t: t.samples).period_s == 3.0
+
+
 def test_state_cache_stays_small(game, tmp_path):
     server = make_server(game, tmp_path, Factory())
     with client_for(server) as client:
@@ -433,7 +520,7 @@ def test_a_transcription_error_clears_when_it_works_again(game):
     def make(start, sample_rate):
         transcriber = factory(start, sample_rate)
         feed = transcriber.feed
-        transcriber.feed = lambda samples: (_ for _ in ()).throw(RuntimeError("boom")) if failing[0] else feed(samples)
+        transcriber.feed = lambda samples, decode=True: (_ for _ in ()).throw(RuntimeError("boom")) if failing[0] else feed(samples, decode)
         return transcriber
 
     server = GameServer(GameSession(build_game()), make, clock=lambda: NOW, tick=0.02)

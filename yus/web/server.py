@@ -5,8 +5,9 @@
 
 One Starlette app holds one GameSession. Each commentator gets a CommentatorStream: it orders and de-duplicates the phone's
 frames (a phone resends what was not acknowledged after a reconnect), timestamps them from the session's clock, records them
-as WAV files, and feeds a LiveTranscriber in its own worker thread, so that decoding never blocks the event loop. A background
-task advances idle commentators every second and saves the session every few seconds and at shutdown. See docs/server.md.
+as WAV files, and feeds a LiveTranscriber in its own worker thread, so that decoding never blocks the event loop. The workers
+take turns on the GPU through one DecodeScheduler, which also sets how often each decodes. A background task advances idle
+commentators every second and saves the session every few seconds and at shutdown. See docs/server.md.
 
 Exposed as the yus-serve command-line tool.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import datetime as dt
@@ -32,7 +34,7 @@ import sys
 import threading
 import time
 import wave
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any, Protocol
 from urllib.parse import parse_qs, quote
 
@@ -66,6 +68,10 @@ PAD_MS = 5000.0  # a gap up to this long (frames lost) is filled with silence; a
 MAX_FRAME_S = 10.0  # longest frame accepted
 MAX_SKEW_MS = 24 * 3600 * 1000.0  # a phone clock this far from the server's, or a capture time this far from now, is not believed
 
+PERIOD_S = 3.0  # seconds of new audio after which a lone commentator's transcriber decodes
+PERIOD_PER_COMMENTATOR_S = 2.25  # with several commentators, each decodes after this many seconds per commentator transcribed
+MAX_PERIOD_S = 15.0  # LiveTranscriber needs force_s + period_s < window_s (4 + period < 20 by default)
+
 TICK_S = 1.0  # how often idle commentators are advanced
 SAVE_S = 10.0  # how often the session is saved, when it changed
 IDLE_S = 120.0  # a commentator heard nothing from this long (connected or not) has their segment ended (their last words committed)
@@ -81,6 +87,8 @@ _FLUSH = object()  # worker: end the segment
 class Transcriber(Protocol):
     """What the server needs of a LiveTranscriber (tests pass fakes)."""
 
+    period_s: float
+
     @property
     def pending_text(self) -> str: ...
 
@@ -90,7 +98,10 @@ class Transcriber(Protocol):
     @property
     def horizon(self) -> dt.datetime: ...
 
-    def feed(self, samples: np.ndarray) -> list[yus.TranscriptGroup]: ...
+    @property
+    def due(self) -> bool: ...
+
+    def feed(self, samples: np.ndarray, decode: bool = True) -> list[yus.TranscriptGroup]: ...
 
     def flush(self) -> list[yus.TranscriptGroup]: ...
 
@@ -140,6 +151,57 @@ class _Start:
     sample_rate: int
 
 
+class DecodeScheduler:
+    """The GPU, shared by the commentators' transcribers: one decode (or flush) at a time, in turns granted in the order asked, so
+    that a commentator waits at most one decode of each other commentator. A turn decodes all the audio that came by then. The
+    more commentators are transcribed at once (`live`), the less often each decodes: every max(period_s, live x
+    per_commentator_s) seconds of new audio, at most MAX_PERIOD_S. `busy_s`: seconds spent in turns."""
+
+    def __init__(self, period_s: float = PERIOD_S, per_commentator_s: float = PERIOD_PER_COMMENTATOR_S):
+        if not (0 < period_s <= MAX_PERIOD_S and 0 <= per_commentator_s):
+            raise ValueError(f"need 0 < period_s <= {MAX_PERIOD_S:g} and per_commentator_s >= 0, got {period_s} and {per_commentator_s}")
+        self.period_s, self.per_commentator_s = period_s, per_commentator_s
+        self.busy_s = 0.0
+        self._turns = threading.Condition()
+        self._waiting: collections.deque[object] = collections.deque()  # the turns asked for; the first is running
+        self._live: set[str] = set()
+
+    @property
+    def live(self) -> int:
+        """Commentators whose audio is being transcribed (with a segment open)."""
+        with self._turns:
+            return len(self._live)
+
+    @property
+    def period(self) -> float:
+        """Seconds of new audio after which each transcriber decodes, for the commentators live now."""
+        return min(MAX_PERIOD_S, max(self.period_s, self.live * self.per_commentator_s))
+
+    def started(self, name: str) -> None:
+        with self._turns:
+            self._live.add(name)
+
+    def ended(self, name: str) -> None:
+        with self._turns:
+            self._live.discard(name)
+
+    @contextlib.contextmanager
+    def turn(self) -> Iterator[None]:
+        """Wait for this caller's turn on the GPU, and hold it inside the `with`."""
+        ticket = object()
+        with self._turns:
+            self._waiting.append(ticket)
+            self._turns.wait_for(lambda: self._waiting[0] is ticket)
+        began = time.perf_counter()
+        try:
+            yield
+        finally:
+            with self._turns:
+                self.busy_s += time.perf_counter() - began
+                self._waiting.popleft()
+                self._turns.notify_all()
+
+
 class CommentatorStream:
     """One commentator's audio: frames in order and once each, timestamped, recorded, and transcribed by a worker thread.
 
@@ -159,7 +221,8 @@ class CommentatorStream:
         self.connection: _Connection | None = None
         self.last_frame = 0.0  # server time of the last frame
         self.received_s = 0.0  # seconds of audio taken
-        self.fed_s = 0.0  # ... and given to a transcriber (set by the worker)
+        self.fed_s = 0.0  # ... and decoded (or dropped), set by the worker
+        self._buffered_s = 0.0  # ... given to the transcriber, not decoded yet (the worker's)
         self.segments = 0
         self.files: list[pathlib.Path] = []
         self.error: str | None = None  # the worker's last error
@@ -183,7 +246,7 @@ class CommentatorStream:
 
     @property
     def backlog_s(self) -> float:
-        """Seconds of audio received but not yet given to the transcriber."""
+        """Seconds of audio received but not decoded yet: up to a decode period, plus the wait for a turn on the GPU."""
         return max(0.0, self.received_s - self.fed_s) if self._worker else 0.0
 
     def hello(self, hello: Hello, now_ms: float) -> None:
@@ -281,50 +344,87 @@ class CommentatorStream:
     # ------------------------------------------------------------------ worker thread
 
     def _work(self) -> None:
-        """Take everything queued, feed the audio in one call per segment (a decoder that fell behind catches up), repeat."""
+        """Give the transcriber the audio queued without decoding it. Once a decode is due, wait for a turn on the GPU (the server's
+        DecodeScheduler), then decode everything that came by then. A segment's end flushes its transcriber, in a turn too."""
         transcriber: Transcriber | None = None
+        held: collections.deque[Any] = collections.deque()  # taken from the queue and not processed yet: a segment's end
+        scheduler = self.server.scheduler
         while True:
-            items = [self._queue.get()]
-            with contextlib.suppress(queue.Empty):
-                while True:
-                    items.append(self._queue.get_nowait())
+            item = held.popleft() if held else self._queue.get()
             try:
-                transcriber = self._process(items, transcriber)
+                transcriber = self._process(item, transcriber)
+                if item is _STOP:
+                    return
+                if transcriber is not None and not held:
+                    transcriber.period_s = scheduler.period
+                    if transcriber.due:
+                        with scheduler.turn():
+                            self._take_audio(transcriber, held)
+                            self._decode(transcriber)
             finally:
-                for _ in items:
-                    self._queue.task_done()
-            if any(item is _STOP for item in items):
-                return
+                self._queue.task_done()
 
-    def _process(self, items: list[Any], transcriber: Transcriber | None) -> Transcriber | None:
-        audio: list[np.ndarray] = []
-        for item in [*items, None]:  # None: feed what was gathered
+    def _process(self, item: Any, transcriber: Transcriber | None) -> Transcriber | None:
+        """Audio goes to the transcriber, to wait for a decode. A new segment, a flush or the end ends the transcriber's segment:
+        it commits every word."""
+        try:
             if isinstance(item, np.ndarray):
-                audio.append(item)
-                continue
-            try:
-                self._feed(transcriber, audio)
-                if item is not None and transcriber is not None:  # a new segment, a flush or the end: commit every word
-                    transcriber, ended = None, transcriber
-                    self._deliver(ended.flush(), ended)
-                if isinstance(item, _Start):
-                    self._rate = item.sample_rate
-                    transcriber = self.server.transcriber_factory(item.start, item.sample_rate)  # type: ignore[misc]
-            except Exception as error:  # keep the worker alive: log, drop the audio, and go on
-                log.exception("Transcription failed for %s", self.name)
-                self.error = f"{type(error).__name__}: {error}"
-            audio = []
+                self._buffer(transcriber, item)
+                return transcriber
+            if transcriber is not None:
+                transcriber, ended = None, transcriber
+                self.server.scheduler.ended(self.name)
+                try:
+                    with self.server.scheduler.turn():
+                        groups = ended.flush()
+                finally:
+                    self.fed_s, self._buffered_s = self.fed_s + self._buffered_s, 0.0
+                self._deliver(groups, ended)
+            if isinstance(item, _Start):
+                self._rate = item.sample_rate
+                transcriber = self.server.transcriber_factory(item.start, item.sample_rate)  # type: ignore[misc]
+                self.server.scheduler.started(self.name)
+        except Exception as error:  # keep the worker alive: log and go on
+            self._failed(error)
         return transcriber
 
-    def _feed(self, transcriber: Transcriber | None, audio: list[np.ndarray]) -> None:
-        if not audio:
-            return
-        samples = np.concatenate(audio).astype(np.float32) / 32768.0
-        try:
-            if transcriber is not None:
-                self._deliver(transcriber.feed(samples), transcriber)
-        finally:
+    def _buffer(self, transcriber: Transcriber | None, pcm: np.ndarray) -> None:
+        samples = pcm.astype(np.float32) / 32768.0
+        if transcriber is None:  # its transcriber could not be made: the audio is only recorded
             self.fed_s += len(samples) / self._rate
+            return
+        self._buffered_s += len(samples) / self._rate
+        if groups := transcriber.feed(samples, decode=False):  # groups a failed decode completed
+            self._deliver(groups, transcriber)
+
+    def _take_audio(self, transcriber: Transcriber, held: collections.deque[Any]) -> None:
+        """Give the transcriber the audio that came while waiting for the turn, up to a segment's end (kept in `held`)."""
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                return
+            if not isinstance(item, np.ndarray):
+                held.append(item)
+                return
+            try:
+                self._buffer(transcriber, item)
+            except Exception as error:
+                self._failed(error)
+            finally:
+                self._queue.task_done()
+
+    def _decode(self, transcriber: Transcriber) -> None:
+        try:
+            self._deliver(transcriber.feed(np.zeros(0, dtype=np.float32)), transcriber)
+        except Exception as error:
+            self._failed(error)
+        finally:
+            self.fed_s, self._buffered_s = self.fed_s + self._buffered_s, 0.0
+
+    def _failed(self, error: Exception) -> None:
+        log.exception("Transcription failed for %s", self.name)
+        self.error = f"{type(error).__name__}: {error}"
 
     def _deliver(self, groups: list[yus.TranscriptGroup], transcriber: Transcriber) -> None:
         session = self.server.session
@@ -389,9 +489,11 @@ class GameServer:
         save_every: float = SAVE_S,
         idle_after: float = IDLE_S,
         record_audio: bool = True,
+        scheduler: DecodeScheduler | None = None,
     ):
         self.session = session
         self.transcriber_factory = transcriber_factory
+        self.scheduler = scheduler or DecodeScheduler()
         self.clock = clock
         self.tick, self.save_every, self.idle_after = tick, save_every, idle_after
         self.audio_directory = session.directory / "audio" if record_audio and session.directory is not None else None
@@ -555,6 +657,7 @@ def _game_state(snap: GameSnapshot, events: int) -> dict[str, Any]:
         "teams": [{"name": team.names[0] if team.names else f"team {i + 1}", "names": team.names, "players": list(team.players)} for i, team in enumerate(snap.game.teams)],
         "event_count": len(official),
         "settled_count": snap.settled_count,
+        "late_count": len(snap.late),
         "events": [event_json(event, first + i, first + i >= snap.settled_count, start) for i, event in enumerate(official[first:])],
         "unresolved": [{"team": team, "name": name, "mentions": count} for team, name, count in snap.unresolved],
         "unmentioned": snap.unmentioned,
@@ -855,8 +958,11 @@ class KeyMiddleware:
 # ------------------------------------------------------------------------------------------------------------------ command line
 
 
-def whisper_factory(teams: list[yus.Team], sport: str = "ultimate/indoor", backend: str = "auto", model: str = "large-v3-turbo", language: str = "en") -> TranscriberFactory:
-    """Load Whisper once and make LiveTranscribers that share it. Decodes are serialized (one GPU): commentators take turns."""
+def whisper_factory(
+    teams: list[yus.Team], sport: str = "ultimate/indoor", backend: str = "auto", model: str = "large-v3-turbo", language: str = "en", skip_silence: bool = False
+) -> TranscriberFactory:
+    """Load Whisper once and make LiveTranscribers that share it. Decodes are serialized (one GPU): commentators take turns. With
+    `skip_silence`, a decode is skipped when Silero VAD hears no speech in the new audio and no words wait to be committed."""
     from yus.processing.transcription import live
     from yus.processing.transcription import transcribe as tr
 
@@ -874,7 +980,8 @@ def whisper_factory(teams: list[yus.Team], sport: str = "ultimate/indoor", backe
 
     decode(np.zeros(SAMPLE_RATE, dtype=np.float32), prompt)  # compile the model's kernels before the first commentator
     log.info("Whisper %s loaded with %s; prompt: %s", model, backend, prompt)
-    return lambda start, sample_rate: live.LiveTranscriber(start, prompt, replacements, sample_rate=sample_rate, transcribe=decode)
+    speech = live.SileroSpeech() if skip_silence else None
+    return lambda start, sample_rate: live.LiveTranscriber(start, prompt, replacements, sample_rate=sample_rate, transcribe=decode, speech=speech)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -890,6 +997,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ssl-keyfile", type=pathlib.Path, help="TLS private key.")
     parser.add_argument("--asr", choices=("auto", "mlx", "faster-whisper", "none"), default="auto", help="Whisper backend; none records audio without transcribing.")
     parser.add_argument("--model", default="large-v3-turbo", help="Whisper model (default: large-v3-turbo).")
+    parser.add_argument("--period", type=float, default=PERIOD_S, help=f"Decode a commentator's audio every this many seconds (default: {PERIOD_S:g}).")
+    parser.add_argument(
+        "--period-per-commentator",
+        type=float,
+        default=PERIOD_PER_COMMENTATOR_S,
+        help=f"... or, with several commentators live, every this many seconds per commentator, if longer (default: {PERIOD_PER_COMMENTATOR_S:g}: 4.5 s for two).",
+    )
+    parser.add_argument("--skip-silence", action="store_true", help="Skip decodes of new audio in which Silero VAD hears no speech, while no words wait to be committed.")
     parser.add_argument("--key", help="Require this key: open pages once with ?key=KEY (kept in a cookie). For servers reachable from the internet.")
     parser.add_argument("--no-audio", action="store_false", dest="record_audio", default=True, help="Do not save commentators' audio.")
     parser.add_argument("--llm", metavar="MODEL", help="Also send the groups the rules may have misread to this Ollama model (e.g. qwen2.5-coder:14b; off by default).")
@@ -946,9 +1061,13 @@ def main() -> int:
     if bool(args.ssl_certfile) != bool(args.ssl_keyfile):
         raise SystemExit("Give both --ssl-certfile and --ssl-keyfile")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    try:
+        scheduler = DecodeScheduler(args.period, args.period_per_commentator)
+    except ValueError as error:
+        raise SystemExit(f"--period, --period-per-commentator: {error}") from None
     session = open_session(args, dt.datetime.now().replace(microsecond=0))
-    factory = None if args.asr == "none" else whisper_factory(session.game.teams, session.game.sport, args.asr, args.model)
-    server = GameServer(session, factory, record_audio=args.record_audio)
+    factory = None if args.asr == "none" else whisper_factory(session.game.teams, session.game.sport, args.asr, args.model, skip_silence=args.skip_silence)
+    server = GameServer(session, factory, record_audio=args.record_audio, scheduler=scheduler)
     app = create_app(server, key=args.key)
 
     import uvicorn
