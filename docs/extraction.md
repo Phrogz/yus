@@ -60,14 +60,16 @@ for team, description, name in extractor.associations:   # "oh, red shorts is ka
   there are no associations.
 
 - `events` lists events in time order, with the final ones first. `events[:final_count]` never changes. The events after
-  that are provisional: in practice the one throw whose outcome is still open, shown as completed until the commentary says
-  otherwise. The next group may revise it.
+  that are provisional, and the next group may revise them:
+  - the one throw whose outcome is still open, shown as completed until the commentary says otherwise;
+  - when a throw scored, all of that group's events, until the next group ends or `timeout` seconds pass without words. A
+    correction in the next group ("Blade in the end zone?" | "Nope, not in the end zone") can still take the score back.
 - `advance(now)` takes transcript time, not wall-clock time: the time up to which the ASR has delivered every word. Because
   `feed()` applies the same rule at the start of each group, results do not depend on how often `advance` is called.
 - Streaming and batch give identical events for the same timeout, and final events never change. Tests check this on both
-  transcripts and on 40 random commentaries (with score lines, bare team names, identifications, possessives and accented
-  names). 3,000 random commentaries, with random `advance()` calls and with and without teams, were also checked once, outside
-  the test suite.
+  transcripts and on 40 random commentaries (with score lines, bare team names, identifications, possessives, accented names
+  and corrections). 3,000 random commentaries, with random `advance()` calls and with and without teams, were also checked
+  once, outside the test suite (68 of them parsed groups again after a correction).
 
 ```python
 from yus.processing.evaluation import score
@@ -110,13 +112,29 @@ result.overall.f1, result.exact.f1, result.fields["receiver"].accuracy, result.r
    - "picked up by X" after an unresolved throw means that throw hit the ground.
    - A catch toward the end zone followed by a pickup counts as a score.
    - A thrower known to be on the other team means a turnover was missed.
+   - A thrower, receiver or defender known only on the other team's roster (or said to play for it) means the team in
+     possession was wrong, and the event and possession are corrected: "power dump to tristan" after a false goal is white's.
+     Not when the team was just said ("picked up by gloves for dark, flick to joe"), when the names disagree (dark's turtle
+     to white's joe), or when the thrower caught the team's last pass. Names on both rosters, descriptions and numbers are on
+     no roster and say nothing.
    - "black pulls" gives possession to white.
    - "for dark" and "on dark" set possession, but not after a score line ("5-4 for white") or a line change ("D-line comes on
      for dark"). A bare team name counts only in "white picks it up" or right after a pickup or defense ("picked up by red
      shorts, dark"); "that's 5-4 white" and "the dark corner" say nothing about possession.
    - "for" or "on" ending a group joins a team name starting the next one (Whisper's "picks it up for" | "White.").
    - "score" in "what's the score?" or before a score line ("score's five four") is no goal.
-4. **Associations.** "X is Y" clauses ("oh, red shorts is kaia [on white]", several per sentence) are kept out of the event
+4. **Corrections.** A correction takes back what it contradicts, in the most recent throw. Only provisional events can change.
+   - "not in the end zone", "not in", "not a score": that throw did not score. It stays caught if it was ("caught by
+     somebody").
+   - "no score" after a throw that scored: it was a turnover (this commentator says "no score" for every turnover).
+   - "sorry, to tristan", "no, wait, to tristan": the receiver. "sorry", "nope", "no", "actually", "wait", "er", "i mean",
+     "scratch that" and "my bad" are cue words.
+   - "that wasn't joe, that was connor", "not joe, tristan", "sorry, that was connor", "to joe, sorry, tristan": the name, in
+     the open throw, the most recent finished event that has it, and who holds the disc. Without "not joe", the new name must
+     be a known one (a roster, a line-up, or an earlier event), so "wait, he stepped out" replaces nobody.
+   - When the throw is already finished, the groups since the state before it are parsed again with the change made when it
+     finishes, so possession and the following events follow it.
+5. **Associations.** "X is Y" clauses ("oh, red shorts is kaia [on white]", several per sentence) are kept out of the event
    stream and recorded when they identify a roster player (see above). One that stands alone also takes the rest of its
    phrase with it when that holds no event, so "pikachu is killing it tonight" adds no player "tonight".
 
@@ -128,12 +146,21 @@ and has 104 events. The rules were tuned on dev only. Cells show event F1 / exac
 
 | transcript | dev | test |
 |---|---|---|
-| hand-made, names as spoken | 1.000 / 1.000 | 0.990 / 0.904 |
-| real Whisper large-v3-turbo, one pass (WER 0.10), names as spoken | 0.990 / 0.760 | 0.990 / 0.625 |
-| same Whisper transcript, both sides resolved with PlayerResolver + descriptions | 0.990 / 0.948 | 0.990 / 0.798 |
-| live sliding-window transcript (WER 0.15; spike output, not in repo), resolved, `--timeout 6` | 0.954 / 0.761 | 0.961 / 0.755 |
+| hand-made, names as spoken | 1.000 / 1.000 | 0.990 / 0.942 |
+| real Whisper large-v3-turbo, one pass (WER 0.10), names as spoken | 0.990 / 0.760 | 0.990 / 0.663 |
+| same Whisper transcript, both sides resolved with PlayerResolver + descriptions | 0.990 / 0.948 | 0.990 / 0.837 |
+| live transcript of the one-commentator end-to-end run ([results.md](results.md)), resolved, `--timeout 6` | 0.964 / 0.821 | 0.986 / 0.804 |
+| live sliding-window transcript (WER 0.15; spike output, not in repo, before corrections), resolved, `--timeout 6` | 0.954 / 0.761 | 0.961 / 0.755 |
 
-- **Hand-made transcript, without team files:** 1.000 / 1.000 on dev and 0.990 / 0.894 on test.
+- **Corrections and roster teams** (October 2026). Before them: hand-made test 0.990 / 0.904, Whisper test 0.990 / 0.625 raw
+  and 0.990 / 0.798 resolved, the live run 0.964 / 0.810 and 0.986 / 0.766. Dev did not change on either bundled transcript.
+  - Both bundled transcripts now give the true final score, 14–9 (before: 14–10). "Blade in the end zone, nope, not in the end
+    zone, caught by somebody" is a catch, and the next four throws, white's goal among them, stay white's.
+  - Live, Whisper split that sentence across two groups ("Blade in the end zone?" | "Nope, ..."); it is right there too. The
+    live run's transcript gives 14–10 (before 14–11). The other false goal is Whisper's "Picked Huck by Naked for a score".
+  - The roster rule alone fixes 3 of those 4 throws' team. It also fixes "Deed by Joe" after that false goal on the live
+    transcript: joe plays for white, so the block is white's and the throw it stopped dark's (dev exact +0.011).
+- **Hand-made transcript, without team files:** 1.000 / 1.000 on dev and 0.990 / 0.942 on test.
 - **Why raw names score lower on the Whisper transcript:** Whisper's text differs from the hand transcript's names. Its
   mondegreens write "Adam Federbusch" where the ground truth has "federbusch", and it writes "kidd" for "kid". Comparing
   resolved names removes that difference.
@@ -153,15 +180,21 @@ about 7.7 s median for the live sliding window. The "first shown" columns are fo
 
 | transcript, timeout | final: median / p95 / max | groups waited (0 / 1 / 2) | first shown: median / max | later revised |
 |---|---|---|---|---|
-| hand-made, 6 s | 4.3 / 8.2 / 14.2 s | 52 / 146 / 2 | 1.5 / 6.6 s | 9 of 200 |
-| hand-made, 3 s | 4.2 / 7.0 / 9.9 s | 68 / 133 / 1 | | |
-| Whisper, 6 s | 5.0 / 12.2 / 15.0 s | 79 / 117 / 4 | 1.6 / 14.0 s | 31 of 200 |
+| hand-made, 6 s | 4.9 / 11.3 / 16.1 s | | 1.5 / 6.6 s | 9 of 200 |
+| hand-made, 3 s | 4.7 / 9.9 / 14.2 s | | | |
+| Whisper, 6 s | 5.4 / 15.6 / 28.1 s | | 1.6 / 14.0 s | 31 of 200 |
+
+- **Scores wait for the next group.** That costs 0.4–0.6 s at the median and 3–4 s at p95; before, the rows were
+  4.3 / 8.2 / 14.2 s (52 / 146 / 2 groups waited), 4.2 / 7.0 / 9.9 s (68 / 133 / 1) and 5.0 / 12.2 / 15.0 s (79 / 117 / 4).
+  Whisper's long groups make its worst case 28 s: a score early in a 15 s group waits for the end of the next one. The new
+  rows were measured with `advance()` every 0.25 s between groups; groups waited was not measured again.
 
 - **Timeout trade-off:** a 6 s timeout costs nothing on either transcript; with no timeout the worst case is 14.2 s (hand-made)
   and 17.4 s (Whisper). A 3 s timeout costs 0.03–0.04 dev exact F1, and
   0 s costs 0.07–0.2.
-- **CPU** (M3 Pro, Python 3.13): `feed()` plus `events` takes a median of 18–22 µs per group. That is about 5–5.5 ms for the
-  whole 16-minute game. Building an extractor takes 0.35 ms.
+- **CPU** (M3 Pro, Python 3.13): `feed()` plus `events` takes a median of 33–37 µs per group (18–22 µs before corrections:
+  each group now starts with a copy of the state, to parse again from). That is about 10 ms for the whole 16-minute game.
+  Building an extractor takes 0.35 ms.
 
 ## LLM assistance
 
@@ -206,7 +239,9 @@ session = GameSession(game, descriptions, directory, llm=LLMAssistant("qwen2.5-c
 
 ### Measured
 
-These runs used an M3 Pro, Ollama 0.5.4, and only the models already installed. Cells show event F1 / exact F1; Whisper names
+These runs used an M3 Pro, Ollama 0.5.4, and only the models already installed. They came before the rules learned
+[corrections](#how-it-works), which now fix the retracted score themselves (rules: hand-made test 0.990 / 0.942, Whisper
+test 0.990 / 0.837). Cells show event F1 / exact F1; Whisper names
 are resolved with the descriptions file.
 
 | transcript | rules | + qwen2.5-coder:14b | + llama3.2 (3B) |
@@ -263,8 +298,8 @@ stays off, because:
 - **The test halves were not blind.** The triggers target the error kinds listed under [Limitations](#limitations), which
   came from the test half. The prompt avoids this game's phrases, but the test gains are optimistic.
 
-It is worth trying again with a faster model of the 14b's quality, on a machine with GPU to spare, or once retracted scores
-come back as catches.
+It is worth trying again with a faster model of the 14b's quality, on a machine with GPU to spare. The rules now read the
+retracted score as a catch; the model's other gains have not been measured against them.
 
 ## Limitations
 
@@ -279,9 +314,14 @@ come back as catches.
     "bobbled and dropped" gives receiver "bobbled". "kaia's huck sails out of bounds" gives receiver "sails".
   - Whisper's mishearings of descriptions become names too: "leg strength", "clothes crop", "invert arc".
   - A description that starts with a team name ("white headband") splits into the team and "headband".
-- **Facts are applied as they arrive and never retracted.** "in the end zone, nope, not in the end zone" still scores. A
-  wrong score or turnover then flips possession, and every following event gets the wrong team until a team is named again:
-  4 test events.
+- **Corrections reach only provisional events.** A score can be taken back in the next group, other events only in their own
+  group, or while the throw is still open. Only the most recent throw is corrected: "no score" after a defense says nothing
+  about the goal before it. A correction made after `timeout` seconds of silence comes too late.
+- **Corrections not understood:** "for a score, wait, he stepped out" (no phrase for "out"), a correction of the throw type
+  ("dump to killian; a flick dump"), and a bare name after the cue's sentence ("to joe. Sorry. Tristan.").
+- **Roster teams need roster names.** After a false goal, throws among players described only in the descriptions file ("the
+  kid", "blondie") keep the wrong team until someone on a roster is named. A Whisper mishearing of a roster name can move a
+  throw to the wrong team; the rule never overrides a team just said or a thrower who caught the team's last pass.
 - **Restatements.** "flick put huck close crop" starts a second throw.
 - **The defender is lost when Whisper splits "deed" from "by X" across groups.**
 - **Unsure outcomes.** A throw to the end zone with no "caught" or "score", followed by a pickup by the other team, counts as
