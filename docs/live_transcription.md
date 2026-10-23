@@ -25,11 +25,15 @@ a sliding window of recent audio and only commits words it has heard consistentl
    time (Whisper could not place them in the audio), stock subtitle phrases ("Thanks for watching!"), and the prompt read
    back ("Players: ..."). Drop the repeats of a decoding loop (a 1-5 word phrase three times in a row, or a 6-20 word phrase
    twice; play-by-play repeats a short phrase at most twice: "backhand to George, backhand to Hat"), and a partial repeat right
-   after it, but keep its first copy and the words after it, which are usually real speech.
+   after it, but keep its first copy and the words after it, which are usually real speech. A decode left with no words
+   where an earlier decode heard some (its window holds committed or pending words) failed, and is ignored: the last
+   hypothesis stays pending and the open group open. In the measured game that was 39 of 315 decodes (20 loops, 2 below the
+   confidence check, 17 that heard only "!").
 3. **Find the new words.** Word times drift between decodes, so the decode is aligned on the text of the last committed
-   words it repeats (the match ending nearest the commit point). Without such a match, words whose middle is past the end of
-   the last committed word are new. This keeps re-heard words from being committed twice, and keeps words from being lost
-   when their times move earlier.
+   words it repeats (the match ending nearest the commit point, and nearer it than to an earlier committed copy of the same
+   words, so that "flick to glasses, flick" is not aligned on the first "flick"). Without such a match, words whose middle
+   is past the end of the last committed word are new. This keeps re-heard words from being committed twice, and keeps
+   words from being lost when their times move earlier.
 4. **Commit.** New words are committed when two consecutive decodes agree on them (LocalAgreement-2, comparing the leading
    words) and they ended `hold_s` (1 s) ago, or, agreed or not, once they ended `force_s` (4 s) ago.
 5. **Group.** A pause of more than `gap_s` (0.6 s) after the last committed word closes its group, as soon as a decode hears
@@ -68,12 +72,14 @@ transcriber.transcript                                           # every closed 
 
 - `LiveTranscriber(start, prompt=None, replacements=None, model="large-v3-turbo", backend="auto", sample_rate=16000,
   period_s=3.0, window_s=20.0, hold_s=1.0, force_s=4.0, transcribe=None, gap_s=0.6)`. Other sample rates are resampled
-  (PyAV). Needs `force_s + period_s < window_s`. A `start` with a UTC offset becomes a naive local time
-  (`transcribe.local_naive`), so word times are always naive.
+  (PyAV). Needs `force_s + period_s < window_s <= 30` (one Whisper window). A `start` with a UTC offset becomes a naive
+  local time (`transcribe.local_naive`), so word times are always naive.
 - `feed(samples) -> list[TranscriptGroup]` takes mono audio (a 1-D array, or 2-D with one channel; more channels raise
   `ValueError`); `flush() -> list[TranscriptGroup]`; `transcript`, `open_text`, `pending_text`,
-  `committed` (every committed word as heard, with times in stream seconds), `passes` (each decode's time and compute),
-  `fired` (mondegreens replaced).
+  `committed` (every committed word as heard, with times in stream seconds), `passes` (each decode's time and compute, and
+  whether it `failed` and was ignored), `fired` (mondegreens replaced).
+- When a decode raises, `feed()` (or `flush()`) raises too, but all the audio passed in still counts, so later word times stay
+  right, and the groups completed before the error are returned by the next call. The server logs the error and goes on.
 - `horizon`: the time up to which every word has been returned in a group, for `EventExtractor.advance()` (see
   [extraction.md](extraction.md)). It is the start of the open group or of the pending hypothesis; with neither, the end of
   the last committed word or the start of the next decode's window (`window_s - period_s` before the latest decode's end: no
@@ -140,7 +146,8 @@ which always encodes 30 seconds. Two things made some decodes much slower, and a
   passes gave exactly the same transcript (the next decode hears that audio anyway). `MlxWhisper` decodes only the first window
   of each call (`OneWindow`).
 - **Loops.** A decode that loops ("He's a big fan of the game." 20 times) runs to Whisper's 224-token limit, about 2.2 s.
-  Dropping the term list from the prompt made loops rare; the compression check drops them.
+  Dropping the term list from the prompt made loops rarer, but 1 decode in 16 still loops (20 of 315 in a full-game run);
+  the compression check drops them, and the decode is ignored.
 
 mlx-whisper reports a NaN average log probability for about 1 decode in 6, almost all of them good. Like Whisper's own check,
 the live transcriber lets NaN pass (dropping those decodes raised dev WER by 0.002-0.023 in replays) and gives their groups the
@@ -162,13 +169,16 @@ The whole game, `yus-live-transcribe --speed 0` (the "earlier prototype" is the 
 | Earlier prototype (full term prompt, temperature fallback, no segment filter) | 0.178 | 0.123 | 0.150 | 7.7 / 13.4 / 17.2 / 27.7 s | 63% |
 | **Live, defaults** (period 3 s, force 4 s; 3 runs) | 0.148-0.167 | 0.089-0.108 | 0.118-0.137 | 6.5 / 8.4 / 9.8 / 14.4 s | 49% |
 | Live, defaults, after the loop and `horizon` fixes below (1 run) | 0.139 | 0.103 | 0.121 | 6.4 / 8.4 / 9.6 / 15.4 s | 49% |
+| Live, defaults, also ignoring failed decodes, with the alignment fix (1 run) | 0.144 | 0.118 | 0.131 | 6.4 / 8.7 / 10.6 / 20.5 s | 50% |
 | Live, `--period 2` (2 runs) | 0.137-0.144 | 0.101-0.110 | 0.119-0.127 | 5.1 / 7.2 / 7.7 / 14.1 s | 73% |
 
 Latency and GPU busy are from one clean run each (`yus-live-transcribe` for the defaults). Events extracted from those
 transcripts (`yus-events --timeout 6`, scored by `yus-score` with the game's descriptions): F1 0.965 (exact 0.777) at the
 defaults, 0.975 (0.792) at `--period 2`, against 0.990 (0.870) from `yus-transcribe`'s whole-file transcript. The run after
 the fixes had name recall 0.904 and, with the prototype's extractor on the test half, event F1 0.981 (exact 0.610 with names as
-heard, 0.752 resolved).
+heard, 0.752 resolved); the last run 0.981 (0.610, 0.743). Its 20.5 s maximum is at 566 s, before four looping decodes in a
+row (2.2 s each), which heard nothing; the words before them waited for the next good decode, as they would have before.
+Replays of the same decodes (below) show the effect of each fix without the run-to-run variation.
 
 What was tried on dev. Dev WER differs by up to 0.023 between runs of the same settings (see [Limitations](#limitations)), so
 settings were compared over several runs, or by replaying recorded decodes, which holds the decodes fixed and isolates
@@ -181,7 +191,7 @@ the change (marked "replay").
 | Roster-only prompt (+ segment filter) | 0.146, 6.7 / 12.4 s, busy 53% |
 | Roster + the term list without variants (`swing` but not `swing to`) | 0.199 (unfiltered; roster-only was 0.162) |
 | Greedy decoding only (roster prompt, filtered): **default** | 0.146-0.169 over 6 runs (mean 0.157), 6.4-6.7 / 9.1-10.5 s, busy 47-50% |
-| One window per decode (no second passes) | replay: same transcript; decode time p95 2.9 → 1.5 s, max 3.4 → 2.2 s; 6% less GPU time on dev |
+| One window per decode (no second passes) | replay: same transcript; 6% less GPU time on dev. Decode time p95 2.9-3.1 → 1.5-2.2 s, max 3.4 → 2.2-2.7 s (over the whole game, p95 2.0-2.2 s in 4 runs) |
 | Dropping decodes with a NaN log probability | replay: WER +0.002 to +0.023 |
 | Period 2 s | 0.137-0.155 over 5 runs (mean 0.145), 5.3 / 7.8-9.0 s, busy 71-75%; on test, though, 0.101-0.110 against 0.089-0.108: kept 3 s, which leaves the GPU half free |
 | Force 3 s (replay of 6 runs) | WER -0.011 to +0.005 (mean -0.004); latency 0.3-0.8 s lower. On test +0.003 / +0.009: kept 4 s |
@@ -193,6 +203,9 @@ the change (marked "replay").
 | Loops: drop only the repeats, keep the words after them (it used to cut the decode where the loop began, for as long as the loop stayed in the window): **default** | replay of 9 recordings: WER -0.002 to +0.002 (mean +0.001); p90 / p95 latency 0.1-0.3 s lower. At 190-205 s, where "to Tristan, backhand to glasses, flick" was really said twice, the words after it now commit at most 7.5-7.8 s after they were said, not 10-11 s. On test, 2 of 3 recordings are unchanged; the third gained 14 words of chatter after a "No, no, no" loop at 857 s (0.108 → 0.132) |
 | Keeping a repeat that starts before the commit point (it was accepted before) | replay: WER mean -0.0004 against dropping all repeats; more insertions on some recordings: not adopted |
 | `horizon` in silence: the start of the next decode's window (`window_s - period_s` back) instead of `force_s` back: **default** | replay of 9 recordings: words that start before the horizon reported when they arrived, 8-14% (up to 13 s before it) → 0.4-1.1% (under 1 s); 10 s or 13 s back left about as many, but up to 7 s or 4 s before it. Cost: after a throw and then silence, `EventExtractor.advance()` makes it final about 13 s later |
+| Ignoring a decode that keeps no words where earlier decodes heard some (it used to empty the pending hypothesis, close the open group mid-phrase and move `horizon`), with the alignment fix below: **default** | replay of 9 recordings: WER -0.004 to 0.000 on dev, -0.003 to 0.000 on test; latency unchanged; groups starting within 0.6 s of the previous one (mostly a phrase split in two) 6-29 → 2-18 per recording; words that start before the horizon reported when they arrived 2-10 → 0-5 (all under 0.6 s before it) |
+| Alignment that is nearer an earlier committed copy of the same words is not used: **default** | replay: removes the one duplicate in 9 recordings ("to glasses" at 406 s, committed again after "flick to glasses, flick"; its group started before the previous one) |
+| ... and committing the words a failed decode leaves pending once they ended `force_s` ago | replay of 9 recordings: p95 latency 0.3-2.4 s lower, but WER -0.007 to +0.033 (mean +0.020): words the decode before a loop guessed. Not adopted |
 | Skipping decodes in silence | not built: Silero VAD hears speech in 291-297 of the game's 321 3-second chunks (gym chatter), so at most 9% of decodes could be skipped |
 
 ## Limitations
@@ -209,9 +222,14 @@ the change (marked "replay").
   re-hears it with a different spelling and a time far from the first.
 - Mondegreens are replaced only within a group, as in `yus-transcribe`.
 - A phrase that was really said twice in a row and is 6+ words long ("to Tristan, backhand to glasses, flick" at 192 s) is
-  taken for a loop and loses its second copy; so does a 1-5 word phrase said three times.
+  taken for a loop and loses its second copy; so does a 1-5 word phrase said three times. With the hand-made transcript as a
+  perfect decoder, the live transcriber loses 2 words there (WER 0.002), commits every word within 6 s, and returns no word
+  after `horizon` has passed it.
 - Speech after a loop is kept, including chatter: with the old cut, one recording's test half had 14 fewer inserted words.
-- `horizon` can still be passed by a word whose time a later decode moved earlier: about 1% of words, by under 1 s.
+- `horizon` can still be passed by a word whose time a later decode moved earlier: 0-5 words a game in replays, by under
+  0.6 s.
+- Looping decodes hear nothing. A run of them (up to 5 in a row in the game) holds back the words before it until the next
+  good decode: up to 20 s.
 - Default decoding is for mlx-whisper; the faster-whisper adapter is untested against a real model here (no cached CTranslate2
   model), still decodes second passes, and on a CPU is far too slow for live use.
 - The CLI simulates live arrival from a file; capturing from a microphone is up to the caller (`feed()` takes any audio).

@@ -278,7 +278,7 @@ class LiveTranscriber:
         """The time up to which every word has been returned in a group, for EventExtractor.advance(): the start of the first word of the
         open group or of the pending hypothesis or, with neither, the end of the last committed word or the start of the next decode's
         window (`window_s - period_s` before the end of the latest decode: no later decode hears earlier audio), whichever is later. A word
-        can still start a little before it when a decode moves its time (about 1% of words, by under 1 s, in replays of the measured game).
+        can still start a little before it when a decode moves its time (0-5 words a game, by under 0.6 s, in replays of the measured game).
         It never decreases; after flush() it is the end of the audio."""
         return self.start + dt.timedelta(seconds=round(self.audio_s if self._flushed else self._horizon, 3))
 
