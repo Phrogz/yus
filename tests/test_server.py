@@ -1,6 +1,10 @@
 import contextlib
 import datetime as dt
+import itertools
+import json
+import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -470,10 +474,91 @@ def test_downsampler_keeps_speech_and_removes_aliases():
     console.log(JSON.stringify(out));
     """
     result = subprocess.run([NODE, "-e", script, str(STATIC / "pcm-worklet.js")], capture_output=True, text=True, check=True)
-    import json
-
     levels = json.loads(result.stdout)
     for rate in (48000, 44100):
         assert levels[f"{rate}/440"][0] == 16000  # one second in, one second out
         assert levels[f"{rate}/440"][1] == pytest.approx(0.707, abs=0.01) and levels[f"{rate}/3000"][1] == pytest.approx(0.707, abs=0.02)
         assert levels[f"{rate}/12000"][1] < 0.01  # would alias to 4 kHz: at least 37 dB down
+
+
+CHROME = os.environ.get("YUS_CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+# A synthetic microphone: headless Chrome's fake capture device hangs getUserMedia on macOS.
+FAKE_MICROPHONE = """navigator.mediaDevices.getUserMedia = async (constraints) => {
+  window.constraints = constraints;
+  const context = new AudioContext({ sampleRate: 44100 });
+  document.addEventListener("pointerdown", () => context.resume());  // like the page's own context, it waits for a tap
+  const tone = context.createOscillator(), gain = context.createGain(), out = context.createMediaStreamDestination();
+  tone.frequency.value = 440;
+  gain.gain.value = 0.5;
+  tone.connect(gain).connect(out);
+  tone.start();
+  return out.stream;
+}"""
+
+
+class Browser:
+    """Headless Chrome driven over the DevTools protocol: one tab."""
+
+    def __init__(self, ws):
+        self.ws, self.ids, self.session = ws, itertools.count(1), None
+        target = self.call("Target.createTarget", url="about:blank")["targetId"]
+        self.session = self.call("Target.attachToTarget", targetId=target, flatten=True)["sessionId"]
+
+    def call(self, method: str, **params):
+        i = next(self.ids)
+        self.ws.send(json.dumps({"id": i, "method": method, "params": params, **({"sessionId": self.session} if self.session else {})}))
+        while (message := json.loads(self.ws.recv(timeout=20))).get("id") != i:
+            pass
+        assert "error" not in message, message
+        return message["result"]
+
+    def js(self, expression: str):
+        result = self.call("Runtime.evaluate", expression=expression, awaitPromise=True, returnByValue=True)
+        assert "exceptionDetails" not in result, result["exceptionDetails"]
+        return result["result"].get("value")
+
+    def wait(self, expression: str, timeout: float = 10.0):
+        wait_until(lambda: self.js(expression), timeout)
+
+
+@pytest.mark.skipif(os.environ.get("YUS_SLOW_TESTS") != "1" or not os.path.exists(CHROME), reason="needs YUS_SLOW_TESTS=1 and Chrome (YUS_CHROME)")
+def test_commentate_page_in_chrome(game, tmp_path):
+    """The real page in headless Chrome: audio waits for a tap, then goes from a 44.1 kHz context to the transcriber at 16 kHz;
+    a dropped connection reconnects and continues the segment, and stop ends it."""
+    from websockets.sync.client import connect
+
+    factory = Factory()
+    server = GameServer(GameSession(game, directory=tmp_path), factory, tick=0.1)
+    command = [CHROME, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={tmp_path / 'profile'}", "--mute-audio", "--no-first-run", "about:blank"]
+    with running(create_app(server, dashboard=False)) as url, subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as chrome:
+        try:
+            devtools = next(match.group(1) for line in chrome.stderr if (match := re.search(r"DevTools listening on (ws://\S+)", line)))
+            with connect(devtools, max_size=None) as ws:
+                tab = Browser(ws)
+                tab.call("Page.navigate", url=url.replace("ws://", "http://").replace("/ws/audio", "/commentate"))
+                tab.wait("document.readyState === 'complete' && document.getElementById('focus').options.length === 3")
+                tab.js(FAKE_MICROPHONE)
+                tab.js("document.getElementById('name').value = 'Chrome'; document.getElementById('focus').value = 'Category 5'; document.getElementById('toggle').click()")
+                tab.wait("document.getElementById('status').textContent === 'Audio paused: tap anywhere to resume'")  # no user gesture yet
+                for kind in ("mousePressed", "mouseReleased"):  # a real tap
+                    tab.call("Input.dispatchMouseEvent", type=kind, x=5, y=5, button="left", clickCount=1)
+                tab.wait("document.getElementById('status').textContent === 'Live'")
+                assert tab.js("window.constraints") == {"audio": {"echoCancellation": False, "channelCount": 1}}
+                tab.wait("document.querySelectorAll('#transcript li').length >= 2")
+                assert tab.js("document.querySelector('#transcript li').textContent").endswith("black pulls")
+                stream = server.streams["Chrome"]
+                received = stream.received_s
+                tab.js("state.ws.close()")  # the connection drops; audio is kept and resent
+                tab.wait("document.getElementById('status').textContent.startsWith('Reconnecting')")
+                tab.wait("document.getElementById('status').textContent === 'Live'")
+                wait_until(lambda: stream.received_s > received + 1)
+                tab.js("document.getElementById('toggle').click()")
+                tab.wait("document.getElementById('status').textContent === 'Stopped (connected)'")
+                wait_until(lambda: factory.made[0].flushed)
+        finally:
+            chrome.terminate()
+    assert stream.segments == 1 and server.session.snapshot().commentators[0].focus_team == "Category 5"
+    (transcriber,) = factory.made
+    audio = np.concatenate(transcriber.feeds)
+    assert transcriber.sample_rate == 16000 and transcriber.samples == pytest.approx(stream.received_s * 16000)
+    assert np.sqrt(np.mean(audio[1600:] ** 2)) == pytest.approx(0.5 / np.sqrt(2), rel=0.02)  # the tone, downsampled

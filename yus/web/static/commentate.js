@@ -8,6 +8,7 @@ const HEADER = 12; // uint32 sequence number, float64 capture time (ms since 197
 const MAX_FRAMES = 3000; // 5 minutes kept for resending
 const SEND_LIMIT = 512 * 1024; // bytes queued in the socket before waiting
 const SILENT_MS = 8000; // no message for this long: reconnect
+const MUTE_MS = 3000; // no audio for this long while live: warn
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -26,6 +27,7 @@ const state = {
   live: false,
   captureBase: null, // capture time of the first sample since starting (ms since 1970)
   captured: 0, // samples captured since then
+  lastFrame: 0, // when the microphone last gave a frame
   ws: null,
   welcomed: false,
   wantSocket: false,
@@ -33,7 +35,8 @@ const state = {
   lastMessage: 0,
   audio: null, // {ctx, source, node, sink, stream}
   wakeLock: null,
-  fatal: null,
+  fatal: null, // why streaming stopped for good (the server refused it)
+  problem: null, // why the microphone could not start
 };
 
 function newId() {
@@ -56,6 +59,10 @@ function setStatus(text, kind) {
 
 function showStatus() {
   if (state.fatal) return setStatus(state.fatal, "bad");
+  if (state.problem && !state.live) return setStatus(state.problem, "bad");
+  const audio = state.audio;
+  if (state.live && audio && audio.ctx.state !== "running") return setStatus("Audio paused: tap anywhere to resume", "bad");
+  if (state.live && Date.now() - state.lastFrame > MUTE_MS) return setStatus("No sound from the microphone", "bad");
   const waiting = (state.seq - 1 - state.acked) * (FRAME_SAMPLES / RATE);
   const open = state.ws && state.ws.readyState === WebSocket.OPEN && state.welcomed;
   if (state.live && open) setStatus(waiting > 1 ? `Live, catching up (${waiting.toFixed(0)} s to send)` : "Live", "ok");
@@ -163,6 +170,7 @@ setInterval(() => {
 function onFrame(data) {
   const pcm = new Int16Array(data.pcm);
   const now = Date.now();
+  state.lastFrame = now;
   if (state.captureBase === null) {
     const latency = state.audio && state.audio.ctx.baseLatency ? state.audio.ctx.baseLatency * 1000 : 0;
     state.captureBase = now - (pcm.length / RATE) * 1000 - latency;
@@ -188,12 +196,10 @@ async function start() {
   const name = ui.name.value.trim();
   if (!name) {
     ui.name.focus();
-    setStatus("Enter your name first", "bad");
-    return;
+    return fail("Enter your name first");
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.AudioContext) {
-    setStatus("This browser can't record here: the page must be opened over HTTPS", "bad");
-    return;
+    return fail("This browser can't record here: the page must be opened over HTTPS");
   }
   store("yus.name", name);
   store("yus.focus", ui.focus.value);
@@ -217,10 +223,11 @@ async function start() {
     state.audio = { ctx, source, node, sink, stream };
   } catch (error) {
     ctx.close();
-    setStatus("Microphone unavailable: " + (error.message || error.name || error), "bad");
-    return;
+    return fail("Microphone unavailable: " + (error.message || error.name || error));
   }
+  state.problem = null;
   state.live = true;
+  state.lastFrame = Date.now();
   state.captureBase = null;
   state.stopPending = false;
   state.wantSocket = true;
@@ -230,6 +237,11 @@ async function start() {
   ui.notice.textContent = "";
   keepAwake();
   connect();
+  showStatus();
+}
+
+function fail(problem) {
+  state.problem = problem;
   showStatus();
 }
 
@@ -277,6 +289,11 @@ function releaseWakeLock() {
   if (state.wakeLock) state.wakeLock.release().catch(() => {});
   state.wakeLock = null;
 }
+
+// An audio context can be suspended (no user gesture, a phone call, the page in the background); a tap resumes it.
+document.addEventListener("pointerdown", () => {
+  if (state.audio && state.audio.ctx.state !== "running") state.audio.ctx.resume();
+});
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.live) keepAwake();

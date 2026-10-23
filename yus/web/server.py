@@ -542,7 +542,7 @@ def _start(snap: GameSnapshot) -> dt.datetime | None:
 
 
 def _clock(when: dt.datetime, start: dt.datetime | None) -> str:
-    """Game time, e.g. "12:05" (or the time of day without a start)."""
+    """Game time, e.g. "12:05" or "1:02:05" (the time of day without a start)."""
     try:
         seconds = (when - start).total_seconds() if start is not None else None
     except TypeError:  # naive and aware
@@ -550,7 +550,8 @@ def _clock(when: dt.datetime, start: dt.datetime | None) -> str:
     if seconds is None:
         return f"{when:%H:%M:%S}"
     sign, seconds = ("-" if seconds < 0 else ""), abs(int(seconds))
-    return f"{sign}{seconds // 60}:{seconds % 60:02d}"
+    hours, minutes = divmod(seconds // 60, 60)
+    return f"{sign}{hours}:{minutes:02d}:{seconds % 60:02d}" if hours else f"{sign}{minutes}:{seconds % 60:02d}"
 
 
 def event_text(event: yus.Event) -> str:
