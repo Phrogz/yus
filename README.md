@@ -204,4 +204,5 @@ on `/admin`. The game is timed on the day of the replay; `yus-replay` prints whe
 | [server.md](docs/server.md) | `yus-serve`, the commentate page, sharing the GPU, HTTPS, `yus-replay` |
 | [dashboard.md](docs/dashboard.md) | the live stats dashboard |
 | [results.md](docs/results.md) | the whole pipeline measured on a real game |
+| [unlabeled_games.md](docs/unlabeled_games.md) | `yus-game` on ten recordings without ground truth, and how it fails |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | how to help; tests run with `uv run pytest -q` |

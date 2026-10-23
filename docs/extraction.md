@@ -406,7 +406,7 @@ stays off, because:
 - **It does not help live.** On the same live transcripts it is neutral or slightly worse (event and exact F1 −0.005).
 - **It costs time.** Settling takes 1.4 s longer at the median and 4.3 s longer at p90. 3 of 47 answers missed the 10 s
   budget, among them two useful fixes, and Whisper's decodes slow by 0.4 s at p90.
-- **There is no GPU to spare with two commentators.** Whisper alone keeps the GPU 97–99% busy ([results.md](results.md)).
+- **Little GPU is spare with two commentators.** Taking turns, they keep it 65% busy (98% before the turns) ([results.md](results.md)).
 - **The test halves were not blind.** The triggers target the error kinds listed under [Limitations](#limitations), which
   came from the test half. The prompt avoids this game's phrases, but the test gains are optimistic.
 

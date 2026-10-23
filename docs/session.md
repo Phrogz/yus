@@ -174,8 +174,7 @@ and its descriptions file.
 - **Correctness.**
   - After `replay()` and `finish()`, the official stream equals the batch pipeline's (`extract_events` → `resolve_stream`,
     teams then named by their first names). So do all stats tables, and the Whisper transcript gives the same result.
-  - The score is 14–10. The ground truth is 14–9: the extractor counts "blade in the end zone nope not in the end zone" as a
-    goal (a known extraction limitation).
+  - The score is 14–9, as in the ground truth: "blade in the end zone nope not in the end zone" is no goal.
   - In snapshots taken after every group, settled events never changed and `settled_count` never decreased.
 - **Two commentators.** The second commentator is synthetic: the same commentary with a clock 5 s ahead, every 8th group
   missed, and "light"/"dark" in place of "white"/"black". Groups were fed in arrival order, 462 in all, each commentator

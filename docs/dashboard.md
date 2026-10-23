@@ -23,7 +23,7 @@ GameSession.snapshot() ──GameSnapshot──> dashboard (polls every second) 
 | Teams | goals, holds/O points, breaks/D points, possessions, goals per possession, throws, completions, turnovers, Ds, hucks, wall/net throws | `team_box` |
 | Recent events | the newest 40 official events, newest first, with game time and running score after goals | `official` |
 | Unresolved names | names that are not roster players yet, with mention counts, and per team the players nobody has named (likely identities) | `unresolved`, `unmentioned` |
-| Players | box score, sortable by any column | `player_box` |
+| Players | box score, sortable by any column; points played, minutes on and plus-minus, blank when nobody said who is on the field | `player_box`, `on_field` |
 | Throw types, Directions | per team: throws by type (or direction), stacked completed / goal / turnover, labelled with count and completion rate | `throw_types`, `directions` |
 | Connections | per team: thrower × receiver heatmap of throws (hover: completions, goals) | `connections` |
 

@@ -111,12 +111,17 @@ test after.
 | two live transcripts of the real audio, merged afterwards | 207 | 14–10 | 0.968 / 0.791 | 0.954 / 0.843 | 0.981 / 0.743 |
 | ... the run after the settling fix | 206 | 14–10 | 0.975 / 0.793 | 0.964 / 0.802 | 0.986 / 0.785 |
 
-- **Live vs afterwards.** The last two rows are the transcripts of the two-commentator runs in [results.md](results.md)
-  (the same audio streamed twice, about 5 s apart, focus white and dark), scored after moving them back onto the recording.
+- **Today.** Since the extractor takes back corrected scores (commit fc4448d), the hand-made transcript gives 14–9 and
+  0.995 / 0.970 (dev 1.000 / 1.000, test 0.990 / 0.942), and Whisper's 14–9 and 0.990 / 0.890 (0.990 / 0.948,
+  0.990 / 0.837). The other rows were not run again.
+- **Live vs afterwards.** The last two rows are the transcripts of two earlier two-commentator runs (the same audio
+  streamed twice, about 5 s apart, focus white and dark), scored after moving them back onto the recording.
   Merged afterwards, they give the live runs' event F1 (0.968 / 0.796 and 0.975 / 0.793 live) and offsets of −5.34 s
   and −5.06 s (−5.33 s and −5.06 s live). The score is 14–10 against 13–10 live: merging now keeps a score that one
   commentator heard and the other heard as two throws (white's goal at 154 s). With the merge before that change,
   afterwards also gave 13–10.
+  The two-commentator runs now in [results.md](results.md), merged afterwards at commit c11b795, give their live event F1
+  (0.975 / 0.828 and 0.966 / 0.809) and score (14–9), with offsets of −5.10 s and −5.12 s (−5.10 s and −5.09 s live).
 - **Speed.** Processing a whole game from transcripts takes 0.05–0.13 s (one or two commentators), about 0.6 s with the
   command's start-up. The slow test transcribes the first 120 s of the real recording with mlx-whisper large-v3-turbo
   (17.5 s in all, model loading included): 17 events, event F1 0.968, exact 0.839 up to 115 s.
@@ -136,6 +141,6 @@ test after.
 - **A recording without a start time**, first and not transcribed yet, names the game directory only once transcribed, so a
   game already there is found only then (its transcript is kept).
 - **Extraction and merging** keep their own limits ([extraction.md](extraction.md#limitations), [merging.md](merging.md#limitations)),
-  e.g. "in the end zone? nope" still counts as a goal.
+  e.g. a score taken back two groups later still counts.
 - **Team conflicts** between commentators are found only for events nobody else reported; a whole possession put on the
   wrong team by the only commentator who saw it is not.

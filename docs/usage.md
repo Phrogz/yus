@@ -288,7 +288,7 @@ from yus.processing.event_unification import GameDescriptions, PlayerResolver
 resolver = PlayerResolver(game.teams, GameDescriptions.model_validate_json(path.read_text()))
 resolved = resolver.resolve_stream(raw_stream)    # pass commentator=... for a stream loaded from JSON
 resolver.unresolved(raw_stream)                   # [("Dump & Drizzle", "glasses", 32), ...] still needing a person
-resolver.team_conflicts(raw_stream)               # [TeamConflict(event=41, team="Category 5", roster_team="Dump & Drizzle", name="joe"), ...]
+resolver.team_conflicts(raw_stream)               # [TeamConflict(event=41, team="Category 5", roster_team="Dump & Drizzle", name="joe", player="Joe Oaks"), ...]
 resolver.unmentioned_players(raw_stream)          # roster players nobody has named: the likely identities
 resolver.describe("white", ["glasses"], player="Ari Weissman")   # learned live (hypothetical here); re-resolve to fix earlier events
 path.write_text(resolver.descriptions.model_dump_json(indent=2))  # keep what was learned with the game
