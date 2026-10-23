@@ -20,7 +20,7 @@ import yus.sports.ultimate.indoor  # noqa: F401  (registers the indoor event typ
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
 from yus.processing.stats.compute import GameStats, compute_stats
 
-ALL_TABLES = GameStats.DERIVED_TABLES + GameStats.RAW_TABLES
+ALL_TABLES = GameStats.DERIVED_TABLES + GameStats.ON_FIELD_TABLES + GameStats.RAW_TABLES
 
 _HTML_STYLE = """
 body { font-family: system-ui, sans-serif; margin: 1.5rem; color: #1d1d1f; background: #fff; }
@@ -39,7 +39,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--descriptions", type=pathlib.Path, help="Per-game descriptions JSON (GameDescriptions); needs --team.")
     parser.add_argument("--commentator", help="Whose stream this is, for commentator-specific descriptions.")
     parser.add_argument("--format", choices=["text", "csv", "html"], default="text", help="Output format (default: text).")
-    parser.add_argument("--tables", help=f"Comma-separated tables to output (default: all derived tables). Choices: {', '.join(ALL_TABLES)}.")
+    parser.add_argument(
+        "--tables", help=f"Comma-separated tables to output (default: the derived ones; on_field, lines, shifts if a team has subs). Choices: {', '.join(ALL_TABLES)}."
+    )
     parser.add_argument("-o", "--output", type=pathlib.Path, help="Output file (text, html; default: stdout) or directory (csv; default: EVENTS-stats/ beside EVENTS).")
     return parser
 
@@ -49,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.descriptions and not args.teams:
         parser.error("--descriptions needs --team files to resolve against")
-    tables = [name.strip() for name in args.tables.split(",") if name.strip()] if args.tables else list(GameStats.DERIVED_TABLES)
+    tables = [name.strip() for name in args.tables.split(",") if name.strip()] if args.tables else []
     if unknown := [name for name in tables if name not in ALL_TABLES]:
         parser.error(f"unknown table(s) {', '.join(unknown)}; choices: {', '.join(ALL_TABLES)}")
 
@@ -62,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         stream = resolver.resolve_stream(stream, commentator=args.commentator)
 
     stats = compute_stats(stream, teams or None)
-    selected = stats.tables(tables)
+    selected = stats.tables(tables or stats.derived())
     if args.format == "csv":
         directory = args.output or args.events.with_name(args.events.name.removesuffix(".json") + "-stats")
         directory.mkdir(parents=True, exist_ok=True)

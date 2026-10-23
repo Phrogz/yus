@@ -7,12 +7,16 @@ Indoor rules assumed: the first point starts with a pull; after a goal the team 
 point won by the team that started it on offense, and a "break" is one won by the other team.
 
 Times with a UTC offset are turned into naive wall-clock times (pandas can't mix the two); a team the events leave empty ("") is
-inferred from who had the disc.
+inferred from who had the disc (a substitution's, from the player's other events).
+
+Who is on the field (`on_field`, `lines`, `shifts`) comes from substitutions; see `on_field.py`.
 """
 
 from __future__ import annotations
 
+import collections
 import datetime
+import functools
 import math
 from collections.abc import Callable
 from typing import Any, ClassVar
@@ -22,6 +26,7 @@ import pydantic
 
 import yus
 from yus.processing.event_unification.players import normalize
+from yus.processing.stats.on_field import UNKNOWN_LINE, on_field
 from yus.sports import ultimate
 
 UNKNOWN = "unknown"
@@ -127,6 +132,25 @@ _BREAKDOWN_COUNTS = {"throws": "int64", "completions": "int64", "goals": "int64"
 THROW_TYPE_COLUMNS = {"team": "object", "type": "object"} | _BREAKDOWN_COUNTS
 DIRECTION_COLUMNS = {"team": "object", "direction": "object"} | _BREAKDOWN_COUNTS
 CONNECTION_COLUMNS = {"team": "object", "thrower": "object", "receiver": "object"} | _BREAKDOWN_COUNTS
+_GOALS_ON = {"goals_for": "int64", "goals_against": "int64", "plus_minus": "int64"}
+ON_FIELD_COLUMNS = (
+    {"team": "object", "player": "object", "points_played": "int64", "time_on_s": "float64", "time_unknown_s": "float64"}
+    | _GOALS_ON
+    | {"goals_unknown": "int64", "provisional": "bool"}
+)
+LINE_COLUMNS = {"team": "object", "line": "object", "points": "int64", "time_s": "float64"} | _GOALS_ON | {"provisional": "bool"}
+SHIFT_COLUMNS = {
+    "shift": "int64",
+    "team": "object",
+    "player": "object",
+    "state": "object",
+    "start": "datetime64[ns]",
+    "end": "datetime64[ns]",
+    "duration_s": "float64",
+    "provisional": "bool",
+}
+LINE_SIZE = 5
+"""Players per team on the field in indoor Ultimate: `compute_stats`'s default `line_size`."""
 _TIMELINE_COLUMNS = {
     "goal": "int64",
     "event": "int64",
@@ -147,7 +171,9 @@ class GameStats(pydantic.BaseModel):
     Raw tables have one row per event of one type, indexed by the event's position in the stream: `throws`, `defenses`,
     `substitutions`, `infractions`. Each row carries its `point` and `possession` numbers and a `provisional` flag. Derived tables
     aggregate them: `possessions`, `points`, `team_box`, `player_box`, `throw_types` and `directions` (outcomes per team and throw
-    type or direction), `connections` (thrower -> receiver), and `score_timeline` (one row per goal with the running score).
+    type or direction), `connections` (thrower -> receiver), and `score_timeline` (one row per goal with the running score). For
+    teams with substitutions: `on_field` (points played, playing time and plus-minus per player), `lines` (per line combination)
+    and `shifts` (each player's stints on, off, or unknown).
     Unknown players (None) are left out of the player tables (`player_box`, `connections`) but counted in the team tables.
     Events whose team is unknown (None in a table) and can't be inferred are left out of every per-team table.
     A derived row is flagged `provisional` when a provisional event changes it (or makes it).
@@ -159,6 +185,7 @@ class GameStats(pydantic.BaseModel):
     score: dict[str, int] = pydantic.Field(..., description="Goals per team, in team order.")
     start: datetime.datetime | None = pydantic.Field(..., description="Time that `elapsed` counts from (naive): the stream's game start, else its first event.")
     provisional_from: int | None = pydantic.Field(None, description="Events from this index on are flagged provisional.")
+    line_size: int | None = pydantic.Field(LINE_SIZE, description="Players per team on the field; None: unknown, so no line is ever known.")
 
     throws: pd.DataFrame
     defenses: pd.DataFrame
@@ -172,13 +199,21 @@ class GameStats(pydantic.BaseModel):
     directions: pd.DataFrame
     connections: pd.DataFrame
     score_timeline: pd.DataFrame
+    on_field: pd.DataFrame
+    lines: pd.DataFrame
+    shifts: pd.DataFrame
 
     RAW_TABLES: ClassVar[tuple[str, ...]] = ("throws", "defenses", "substitutions", "infractions")
     DERIVED_TABLES: ClassVar[tuple[str, ...]] = ("team_box", "player_box", "points", "possessions", "score_timeline", "throw_types", "directions", "connections")
+    ON_FIELD_TABLES: ClassVar[tuple[str, ...]] = ("on_field", "lines", "shifts")
 
     def tables(self, names: list[str] | tuple[str, ...] | None = None) -> dict[str, pd.DataFrame]:
-        """The named tables (default: all derived ones, then the raw ones), by name."""
-        return {name: getattr(self, name) for name in names or self.DERIVED_TABLES + self.RAW_TABLES}
+        """The named tables (default: `derived()`, then the raw ones), by name."""
+        return {name: getattr(self, name) for name in names or self.derived() + self.RAW_TABLES}
+
+    def derived(self) -> tuple[str, ...]:
+        """The names of the derived tables, with the on-field ones when some team has substitutions (else they are empty)."""
+        return self.DERIVED_TABLES + (self.ON_FIELD_TABLES if len(self.on_field) else ())
 
     def summary(self) -> str:
         """One line, e.g. "white 14, black 9 (point 24 in play)"."""
@@ -229,12 +264,13 @@ class _TeamLabels:
         return dict(zip(self.order, reversed(self.order))) if len(self.order) == 2 else {}
 
 
-def compute_stats(stream: yus.EventStream, teams: list[yus.Team] | None = None, provisional_from: int | None = None) -> GameStats:
+def compute_stats(stream: yus.EventStream, teams: list[yus.Team] | None = None, provisional_from: int | None = None, line_size: int | None = LINE_SIZE) -> GameStats:
     """Stats for a resolved event stream (players already mapped by PlayerResolver), in stream order.
 
     `teams` (optional) merges the names events use for one team ("dark", "black") under the team's first name, and orders the
     teams (teams without events still get a row). With `provisional_from`, events from that index on are included but flagged
-    `provisional`, as are the derived rows they count toward, so that a UI can style them.
+    `provisional`, as are the derived rows they count toward, so that a UI can style them. `line_size`: players per team on the
+    field (None if not known).
     """
     labels = _TeamLabels(teams)
     events = stream.events
@@ -244,10 +280,13 @@ def compute_stats(stream: yus.EventStream, teams: list[yus.Team] | None = None, 
     firm = len(events) if provisional_from is None else max(provisional_from, 0)
 
     throws, defenses, substitutions, infractions = _number_events(events, labels, clock, start, firm)
+    _sub_teams(substitutions, throws, defenses)
     possessions = _possessions(throws, defenses)
     points = _points(sorted(throws + defenses + substitutions + infractions, key=lambda row: row["event"]), start)
     team_box = _team_box(labels.order, throws, defenses, possessions, points)
     player_box = _player_box(labels.order, throws, defenses)
+    on, lines, shifts = on_field(throws, defenses, substitutions, points, start, line_size)
+    rank = {team: i for i, team in enumerate(labels.order)}
     timeline_columns = _TIMELINE_COLUMNS | {SCORE_PREFIX + team: "int64" for team in labels.order} | {"provisional": "bool"}
 
     return GameStats(
@@ -255,6 +294,7 @@ def compute_stats(stream: yus.EventStream, teams: list[yus.Team] | None = None, 
         score={team: row["goals"] for team, row in zip(labels.order, team_box)},
         start=start,
         provisional_from=provisional_from,
+        line_size=line_size,
         throws=_frame(throws, THROW_COLUMNS, "event"),
         defenses=_frame(defenses, DEFENSE_COLUMNS, "event"),
         substitutions=_frame(substitutions, SUBSTITUTION_COLUMNS, "event"),
@@ -267,6 +307,9 @@ def compute_stats(stream: yus.EventStream, teams: list[yus.Team] | None = None, 
         directions=_frame(_breakdown(labels.order, throws, "direction", DIRECTIONS), DIRECTION_COLUMNS, ["team", "direction"]),
         connections=_frame(_connections(labels.order, throws), CONNECTION_COLUMNS, ["team", "thrower", "receiver"]),
         score_timeline=_frame(_score_timeline(labels.order, throws, points), timeline_columns, "goal"),
+        on_field=_frame(sorted(on, key=lambda row: (rank[row["team"]], -row["time_on_s"], row["player"])), ON_FIELD_COLUMNS, ["team", "player"]),
+        lines=_frame(sorted(lines, key=lambda row: (rank[row["team"]], row["line"] == UNKNOWN_LINE, -row["time_s"], row["line"])), LINE_COLUMNS, ["team", "line"]),
+        shifts=_frame(shifts, SHIFT_COLUMNS, "shift"),
     )
 
 
@@ -342,6 +385,25 @@ def _number_events(
         elif isinstance(event, ultimate.Infraction):
             infractions.append(row)
     return throws, defenses, substitutions, infractions
+
+
+def _sub_teams(substitutions: list[Row], throws: list[Row], defenses: list[Row]) -> None:
+    """Give a substitution whose team is unknown its player's team: the one team of the player's other substitutions, else of the
+    throws, catches and Ds they made (when that is one team)."""
+    if all(row["team"] is not None or row["player"] is None for row in substitutions):
+        return
+    subbed: dict[str, set[str]] = collections.defaultdict(set)
+    played: dict[str, set[str]] = collections.defaultdict(set)
+    for row in substitutions:
+        if row["team"] is not None and row["player"] is not None:
+            subbed[row["player"]].add(row["team"])
+    for row, name in [(throw, throw["player"]) for throw in throws] + [(throw, throw["receiver"]) for throw in throws] + [(d, d["player"]) for d in defenses]:
+        if row["team"] is not None and name is not None:
+            played[name].add(row["team"])
+    for row in substitutions:
+        if row["team"] is None and row["player"] is not None:
+            found = subbed.get(row["player"]) or played.get(row["player"]) or set()
+            row["team"] = next(iter(found)) if len(found) == 1 else None
 
 
 def _throw_teams(throws: list[tuple[ultimate.Throw, str | None]], other: dict[str, str]) -> list[str | None]:
@@ -592,5 +654,13 @@ def _ratio(part: int, whole: int, digits: int | None = None) -> float:
 
 def _frame(rows: list[Row], columns: dict[str, str], index: str | list[str]) -> pd.DataFrame:
     """A DataFrame of `rows` with exactly `columns` (name -> dtype), indexed by `index`; typed columns even with no rows."""
+    if not rows:
+        return _empty(tuple(columns.items()), tuple(index) if isinstance(index, list) else index).copy()
     data = {name: pd.Series([row[name] for row in rows], dtype=dtype) for name, dtype in columns.items()}
     return pd.DataFrame(data).set_index(index)
+
+
+@functools.cache
+def _empty(columns: tuple[tuple[str, str], ...], index: str | tuple[str, ...]) -> pd.DataFrame:
+    data = {name: pd.Series([], dtype=dtype) for name, dtype in columns}
+    return pd.DataFrame(data).set_index(list(index) if isinstance(index, tuple) else index)

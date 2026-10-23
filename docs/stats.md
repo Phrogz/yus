@@ -1,7 +1,8 @@
 # Stats
 
 `yus.processing.stats` turns an event stream into pandas tables: box scores for teams and players, points, possessions, the
-running score, throw types and directions, and who throws to whom.
+running score, throw types and directions, and who throws to whom. From substitutions it also tracks who is on the field: points
+played, playing time and plus-minus per player, and each team's line combinations.
 
 ## Where it fits
 
@@ -24,9 +25,11 @@ stats.score                        # {"Dump & Drizzle": 14, "Category 5": 9}
 stats.player_box.loc[("Dump & Drizzle", "Tristan Weber")]
 stats.connection_matrix("Dump & Drizzle", "throws")             # thrower x receiver
 live = compute_stats(stream, game.teams, provisional_from=180)  # events 180+ flagged "provisional"
+stats.on_field.loc[("Dump & Drizzle", "Matt Whitlock")]          # points played, seconds on, plus-minus (teams with substitutions)
+stats.lines.loc["Dump & Drizzle"]                                # one row per line of five, and "unknown"
 ```
 
-`compute_stats(stream, teams=None, provisional_from=None) -> GameStats`
+`compute_stats(stream, teams=None, provisional_from=None, line_size=5) -> GameStats`
 
 - `teams`: merges the names events use for one team (`"dark"`, `"black"`) under the team's first name (`"Category 5"`) and fixes
   the team order; teams without events still get a row. Without it, teams are labelled as the events name them.
@@ -34,9 +37,12 @@ live = compute_stats(stream, game.teams, provisional_from=180)  # events 180+ fl
   (a new row, or one that differs from the stats of the events before the index), so a UI can style them (e.g. words live
   transcription has not confirmed yet). For example, a provisional throw that starts a point flags both teams' `team_box` rows
   (their `o_points` / `d_points`).
+- `line_size`: players per team on the field (indoor: 5). `None` if not known: then no line is ever known.
 
 `GameStats` holds `teams`, `score`, `start` (what `elapsed` counts from: the stream's `game.when`, else its first event),
-`summary()`, `connection_matrix(team, value)`, `tables(names)`, and these DataFrames. Every table has a `provisional` column.
+`line_size`, `summary()`, `connection_matrix(team, value)`, `tables(names)`, and these DataFrames. Every table has a `provisional`
+column. `derived()` names the derived tables, with `ON_FIELD_TABLES` (`on_field`, `lines`, `shifts`) when some team has
+substitutions; `tables()` without names gives those and the raw ones.
 
 | Table | Index | Columns |
 | ----- | ----- | ------- |
@@ -51,6 +57,9 @@ live = compute_stats(stream, game.teams, provisional_from=180)  # events 180+ fl
 | `directions` | team, direction | same as `throw_types` |
 | `connections` | team, thrower, receiver | same as `throw_types` |
 | `score_timeline` | goal | event, when, elapsed, point, team, assist, scorer, hockey_assist, hold, `score_<team>` (running score) per team |
+| `on_field` | team, player | points_played, time_on_s, time_unknown_s, goals_for, goals_against, plus_minus, goals_unknown |
+| `lines` | team, line | points, time_s, goals_for, goals_against, plus_minus |
+| `shifts` | shift | team, player, state (`on`, `off`, `unknown`), start, end, duration_s |
 
 Raw tables hold one event type each, so their bool columns stay `bool`. Flags that may not be known yet use nullable dtypes
 (`hold` is `boolean`, NA while the point is in play; a D before any throw has possession `<NA>`). Percentages are 0-100,
@@ -76,6 +85,25 @@ transcription does. So a stream written with `-07:00` offsets gives the same tab
 - **Assist** / **goal**: thrower / receiver of a scoring throw. **Hockey assist**: thrower of the previous throw in the same
   possession.
 - **Unknown players** (`None`) are left out of `player_box` and `connections` but counted in the team tables.
+- **On the field** (`on_field.py`). Only substitutions (and line-ups, said as substitutions on: see
+  [extraction.md](extraction.md#substitutions)) say who is on the field, so only teams with a substitution have rows, from their
+  first one on, and only the players substituted for them.
+  - A player's state between two things said about them follows from both: "a on" then "a off", or "a on" then a throw by a,
+    means on in between. "a off" then "a off" again, or "a off" then a throw by a, means a substitution was missed: unknown. Before
+    the first thing said, unknown. After the last, the state of the last substitution stays, unless something said since
+    disagrees; a throw, catch or D alone says only that they were on then.
+  - Substitutions of one team said within 5 s (`BURST`), with no goal between, are one swap, made at the first one's time.
+  - When `line_size` players of a team are known to be on, the rest are off, and the line is known. When more would be on, a
+    substitution was missed, and every player of that team is unknown until it clears up.
+  - `points_played`: points in which the player was on at some time, or threw, caught or made a D. `time_on_s` and
+    `time_unknown_s` count seconds from `start` to the last event. `goals_for` and `goals_against` count goals while the player
+    was on (at the goal's moment: subs said after it count for the next point), `plus_minus` is their difference, and
+    `goals_unknown` counts goals while their state was unknown. Nothing unknown is guessed or counted as on or off.
+  - `lines`: the team's five as one label (names sorted, joined by ", "), with `unknown` for the time the line is not known. A
+    line's `points` are the points it was on the field for at some time.
+  - A substitution with no team gets its player's: the one team of their other substitutions, else of their throws, catches and Ds.
+  - The dashboard's Players table shows `points_played`, `time_on_s` (in minutes) and `plus_minus` as Pts, Min and +/-, blank for
+    a team with no substitutions.
 - **Unknown teams**: the event extractor writes team `""` when it can't tell (e.g. before any team is named). Such a throw gets
   the team that had the disc: after the previous throw (the same team after a completion, the other one after a turnover or a
   goal), else before the next throw; a D gets the defending team. The "other team" needs exactly two teams. A team that still
@@ -96,8 +124,9 @@ yus-stats game.events.json --team ... --format html -o stats.html --tables team_
   identified yet are listed on stderr.
 - `--descriptions` - the game's descriptions file (needs `--team`); `--commentator` - whose stream it is, for commentator-specific
   descriptions.
-- `--format text|csv|html` (default text); `--tables a,b` (default: all derived tables; the raw ones are `throws`, `defenses`,
-  `substitutions`, `infractions`); `-o` a file (text, html; default stdout) or a directory (csv; default `EVENTS-stats/`).
+- `--format text|csv|html` (default text); `--tables a,b` (default: all derived tables, with `on_field`, `lines` and `shifts` when
+  a team has substitutions; the raw ones are `throws`, `defenses`, `substitutions`, `infractions`); `-o` a file (text, html; default
+  stdout) or a directory (csv; default `EVENTS-stats/`).
 
 ## Measured
 
@@ -108,7 +137,7 @@ a team ("picks it up for white") start a possession of that team; 44 possessions
 black holds 6 and breaks 3.
 
 Recompute time (Apple Silicon, best of 15 runs): 9 ms for the 200-event game (11 ms including `PlayerResolver`), 14 ms for
-1,000 events, 38 ms for 5,000. Most of it is building the 12 DataFrames, so it barely grows with the game. Every prefix of the
+1,000 events, 38 ms for 5,000. Most of it is building the 15 DataFrames, so it barely grows with the game. Every prefix of the
 game (all 201 tested) gives the same rows as the full game for the events so far, except the point and possession still in
 play, whose end and outcome change as the game goes on. With the last 1 or 3 events of a prefix provisional, every row that
 differs from the stats of the final events alone is flagged. Live on the event extractor's output for the real Whisper
@@ -116,10 +145,28 @@ transcript, recomputed after each of its groups, the slowest recompute is about 
 
 The stats are exact for the events they are given; their accuracy is that of event extraction and player resolution.
 
+**On the field**, on the 2025-01-28 subbing commentary (`tests/data/subbing_20250128T2050-*`; the ground truth is a draft, see
+[extraction.md](extraction.md#substitutions)), names resolved with the team file and the game's descriptions file:
+
+- From the draft truth (177 substitutions, 19 goals), each player's state is known for 87% of player-seconds. White's line of five
+  is known for 519 s of 1,015, dark's for 645 s. The commentator missed some substitutions; each one leaves a player unknown
+  until they are mentioned again.
+- From the extractor's events (`timeout=6`), wherever both know a player's state, they agree for 98.8% of player-seconds, but the
+  extractor's stream knows it for only 54% (truth: 87%). Whisper's mishearings split players ("Sarayan", "Sorayan" and "Ryan" are
+  Serayan), and white's line is known for 3 s. With those mishearings resolved too (as team-file mondegreens would), the states
+  are known for 78% and agree for 99.9%; playing time is off by a median of 4 s (white) and 2 s (dark); white's line is known for
+  499 s (truth 519), dark's for 284 s (truth 645: its first substitutions have no team). Plus-minus differs for most players,
+  because the extractor finds 14 of the 19 goals (goals said as "Glasses for a score" with no throw) and gives one to the wrong
+  team.
+- Recomputing takes 11 ms for this game (best of 15). The bundled game, which has no substitutions, takes as long as before
+  (7–8 ms on a busy machine): the three new tables are empty, and empty tables now come from a cache.
+
 ## Limitations
 
 - Events are taken in stream order; a merged stream must be sorted by time.
-- No line tracking: no points played or plus-minus (substitutions are tabled but not used).
+- On-field tracking trusts that substitutions are said; it assumes no unsaid off-and-on between two things said that agree. A
+  throw's team follows possession, so a throw alone never adds a player to a team.
+- A line-up said again later does not take the others off: with more than five then on, the line is unknown.
 - A turnover is charged to the thrower and also counted as a drop-or-miss for the receiver; the stream does not say whose fault
   it was. Stalls, fouls and callahans are not modelled.
 - Possessions are split by throws only: a D logged after a throw marked complete does not end the possession.

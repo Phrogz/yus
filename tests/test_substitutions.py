@@ -1,4 +1,4 @@
-"""Tests for substitutions: their extraction (yus.processing.event_extraction).
+"""Tests for substitutions: their extraction (yus.processing.event_extraction) and who is on the field (yus.processing.stats).
 
 The labeled game is a draft: tests/data/subbing_20250128T2050-draft-eventstream.json, a commentary of substitutions and some play
 (2025-01-28), labeled from its Whisper transcript and not yet checked by the owner. White is Dump & Drizzle; dark has no team file.
@@ -6,6 +6,7 @@ The labeled game is a draft: tests/data/subbing_20250128T2050-draft-eventstream.
 
 import datetime as dt
 import pathlib
+import time
 
 import pytest
 
@@ -13,12 +14,15 @@ import yus
 from tests.data.gruindoor_20250114T2030 import build_game
 from yus.processing.evaluation import score
 from yus.processing.event_extraction import EventExtractor, extract_events
+from yus.processing.event_unification import GameDescriptions, PlayerResolver
+from yus.processing.stats import GameStats, compute_stats
 from yus.sports import ultimate
-from yus.sports.ultimate import SubType
+from yus.sports.ultimate import SubType, indoor
 
 DATA = pathlib.Path(__file__).parent / "data"
 TRANSCRIPT = DATA / "subbing_20250128T2050-whisper-turbo.json"
 TRUTH = DATA / "subbing_20250128T2050-draft-eventstream.json"
+DESCRIPTIONS = DATA / "subbing_20250128T2050-descriptions.json"
 NOW = dt.datetime(2025, 1, 1, 12)
 ON, OFF = SubType.SUB_ON, SubType.SUB_OFF
 
@@ -26,6 +30,11 @@ ON, OFF = SubType.SUB_ON, SubType.SUB_OFF
 @pytest.fixture(scope="module")
 def teams() -> list[yus.Team]:
     return [yus.Team.model_validate_json((DATA / "team_dump_and_drizzle.json").read_text()), yus.Team(names=["dark", "black"])]
+
+
+@pytest.fixture(scope="module")
+def resolver(teams: list[yus.Team]) -> PlayerResolver:
+    return PlayerResolver(teams, GameDescriptions.model_validate_json(DESCRIPTIONS.read_text()))
 
 
 @pytest.fixture(scope="module")
@@ -200,3 +209,119 @@ def test_streaming_matches_batch_on_the_subbing_commentary(teams: list[yus.Team]
             shown = events[: extractor.final_count]
         extractor.finish()
         assert extractor.events == batch
+
+
+# Who is on the field ----------------------------------------------------------------------------------------------------
+
+
+def sub(team: str, player: str, kind: SubType, second: float) -> ultimate.Substitution:
+    return ultimate.Substitution(when=NOW + dt.timedelta(seconds=second), team=team, player=player, sub_type=kind)
+
+
+def throw(team: str, player: str | None, receiver: str | None, second: float, scored: bool = False) -> indoor.Throw:
+    return indoor.Throw(when=NOW + dt.timedelta(seconds=second), team=team, player=player, receiver=receiver, completed=True, scored=scored)
+
+
+def line(team: str, names: str, second: float) -> list[ultimate.Substitution]:
+    return [sub(team, name, ON, second) for name in names.split()]
+
+
+def test_on_field_from_a_line_up_and_swaps():
+    stream = yus.EventStream(
+        events=[
+            *line("white", "a b c d e", 0),
+            throw("white", "a", "b", 10, scored=True),  # point 1: white scores with a-e
+            sub("white", "e", OFF, 20),
+            sub("white", "f", ON, 21),  # one swap, made at 20
+            throw("black", "x", "y", 30, scored=True),  # point 2: black scores against a-d, f
+            throw("white", "f", "a", 40),
+        ]
+    )
+    stats = compute_stats(stream, line_size=5)
+    white = stats.on_field.loc["white"]
+    assert white.loc["e", ["points_played", "time_on_s", "goals_for", "goals_against", "plus_minus"]].tolist() == [2, 20.0, 1, 0, 1]  # on for part of point 2
+    assert white.loc["f", ["points_played", "time_on_s", "plus_minus", "time_unknown_s"]].tolist() == [2, 20.0, -1, 0.0]  # off while a-e were on
+    assert white.loc["a", ["points_played", "time_on_s", "plus_minus", "goals_unknown"]].tolist() == [3, 40.0, 0, 0]
+    assert stats.lines.loc["white", ["time_s", "goals_for", "goals_against"]].to_dict("index") == {
+        "a, b, c, d, e": {"time_s": 20.0, "goals_for": 1, "goals_against": 0},
+        "a, b, c, d, f": {"time_s": 20.0, "goals_for": 0, "goals_against": 1},
+    }
+    assert "black" not in stats.on_field.index.get_level_values("team")  # nobody said who plays for black
+    assert stats.shifts.query("player == 'f'")[["state", "duration_s"]].values.tolist() == [["off", 20.0], ["on", 20.0]]
+
+
+def test_unknown_on_field_state_is_not_guessed():
+    events = [
+        sub("white", "a", ON, 0),
+        sub("white", "b", OFF, 0),  # b was on before: unknown since the start
+        throw("white", "a", "c", 10, scored=True),  # c was never substituted: no row; a is on, b off
+        sub("white", "a", ON, 20),  # a second "a on": "a off" was missed after a's throw at 10, so 10-20 is unknown
+        throw("black", "x", "y", 30, scored=True),
+    ]
+    stats = compute_stats(yus.EventStream(events=events), line_size=5)
+    white = stats.on_field.loc["white"]
+    assert list(white.index) == ["a", "b"]
+    assert white.loc["a", ["time_on_s", "time_unknown_s", "goals_for", "goals_against", "goals_unknown"]].tolist() == [20.0, 10.0, 1, 1, 0]
+    assert white.loc["b", ["time_on_s", "time_unknown_s", "plus_minus"]].tolist() == [0.0, 0.0, 0]
+    assert stats.lines.loc["white"].index.tolist() == ["unknown"]  # never five known on
+
+
+def test_too_many_on_makes_the_line_unknown():
+    events = [*line("white", "a b c d e", 0), sub("white", "f", ON, 10), throw("black", "x", "y", 20, scored=True)]  # e off was missed
+    stats = compute_stats(yus.EventStream(events=events), line_size=5)
+    assert stats.lines.loc["white", "time_s"].to_dict() == {"a, b, c, d, e": 10.0, "unknown": 10.0}
+    assert stats.on_field.loc["white", "goals_unknown"].tolist() == [1] * 6
+    assert compute_stats(yus.EventStream(events=events), line_size=None).lines.index.get_level_values("line").unique().tolist() == ["unknown"]
+
+
+def test_a_substitution_without_a_team_gets_its_players():
+    events = [sub("dark", "x", OFF, 0), sub("", "y", ON, 1), sub("dark", "y", OFF, 5), sub("", "x", ON, 6)]
+    stats = compute_stats(yus.EventStream(events=events))
+    assert stats.substitutions["team"].tolist() == ["dark"] * 4
+
+
+def test_on_field_rows_a_provisional_event_changes_are_flagged():
+    events = [*line("white", "a b c d e", 0), throw("white", "a", "b", 10, scored=True), sub("white", "e", OFF, 20), sub("white", "f", ON, 21)]
+    for firm in range(len(events) - 2, len(events)):
+        marked = compute_stats(yus.EventStream(events=events), provisional_from=firm)
+        final = compute_stats(yus.EventStream(events=events[:firm]))
+        for name in ("on_field", "lines", "shifts"):
+            rows, before = getattr(marked, name), getattr(final, name)
+            changed = [key for key in rows.index if key not in before.index or not rows.loc[key].drop("provisional").equals(before.loc[key].drop("provisional"))]
+            assert rows.loc[changed, "provisional"].all(), (firm, name)
+
+
+def test_on_field_stats_of_the_subbing_commentary(teams: list[yus.Team], resolver: PlayerResolver, truth: yus.EventStream, transcript: yus.Transcript):
+    """From the draft truth: who was on the field is known for 87% of player-seconds; the extractor's stream, resolved, agrees with
+    it wherever both know (Whisper's mishearings of names aside, see docs/stats.md)."""
+    stats = compute_stats(resolver.resolve_stream(truth), teams)
+    assert stats.score == {"Dump & Drizzle": 10, "dark": 9}
+    white = stats.on_field.loc["Dump & Drizzle"]
+    assert len(white) == 9 and white.loc["Tristan Weber", "points_played"] == 16
+    assert (white["goals_for"] + white["goals_against"] + white["goals_unknown"] <= 19).all()
+    known = stats.lines.drop(index="unknown", level="line")
+    assert known.groupby("team")["time_s"].sum().round().to_dict() == {"Dump & Drizzle": 519.0, "dark": 645.0}
+    assert (stats.shifts["duration_s"] > 0).all() and set(stats.shifts["state"]) == {"on", "off", "unknown"}
+    extracted = compute_stats(resolver.resolve_stream(extract_events(transcript, teams, timeout=6.0)), teams)
+    assert set(extracted.on_field.index.get_level_values("team")) == {"Dump & Drizzle", "dark"}
+    assert isinstance(extracted, GameStats) and not extracted.on_field.empty
+
+
+def test_recomputing_with_substitutions_stays_fast(teams: list[yus.Team], resolver: PlayerResolver, truth: yus.EventStream):
+    stream = resolver.resolve_stream(truth)
+    started = time.perf_counter()
+    for _ in range(5):
+        compute_stats(stream, teams)
+    assert (time.perf_counter() - started) / 5 < 0.1  # measured: 11 ms (the bundled game, without substitutions: 9 ms)
+
+
+def test_yus_stats_writes_the_on_field_tables_when_there_are_substitutions(teams: list[yus.Team], tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]):
+    from yus.processing.stats import cli
+
+    dark = tmp_path / "dark.json"
+    dark.write_text(teams[1].model_dump_json())
+    args = [str(TRUTH), "--team", str(DATA / "team_dump_and_drizzle.json"), "--team", str(dark), "--descriptions", str(DESCRIPTIONS)]
+    assert cli.main([*args, "--format", "csv", "-o", str(tmp_path / "csv")]) == 0
+    assert {"on_field", "lines", "shifts"} <= {path.stem for path in (tmp_path / "csv").iterdir()}
+    assert cli.main([*args, "--tables", "on_field"]) == 0
+    assert "== on_field (21 rows) ==" in capsys.readouterr().out
