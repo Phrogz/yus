@@ -1046,21 +1046,9 @@
             },
             {
               "confidence": 0.57373046875,
-              "duration": "PT0.82S",
+              "duration": "PT1.22S",
               "start": "2025-01-14T20:32:56.220000",
-              "text": "the"
-            },
-            {
-              "confidence": 0.6962890625,
-              "duration": "PT0.22S",
-              "start": "2025-01-14T20:32:57.040000",
-              "text": "ends"
-            },
-            {
-              "confidence": 0.9912109375,
-              "duration": "PT0.18S",
-              "start": "2025-01-14T20:32:57.260000",
-              "text": "of"
+              "text": "the end zone"
             },
             {
               "confidence": 0.9365234375,
@@ -2329,22 +2317,10 @@
               "text": "put"
             },
             {
-              "confidence": 0.97021484375,
-              "duration": "PT0.18S",
-              "start": "2025-01-14T20:35:00.720000",
-              "text": "the"
-            },
-            {
-              "confidence": 0.94140625,
-              "duration": "PT0.22S",
-              "start": "2025-01-14T20:35:00.900000",
-              "text": "ends"
-            },
-            {
               "confidence": 0.3291015625,
-              "duration": "PT0.18S",
-              "start": "2025-01-14T20:35:01.120000",
-              "text": "of"
+              "duration": "PT0.58S",
+              "start": "2025-01-14T20:35:00.720000",
+              "text": "the end zone"
             },
             {
               "confidence": 0.5322265625,

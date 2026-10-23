@@ -138,7 +138,7 @@ PHRASES = [
     "for a score", "in the end zone", "off the wall", "stolen by {n}", "{n} backhand to {n}", "turf", "no score", "{n} is {n}", "{t} pulls",
     "score is five to three", "um", "{n}", "caught by {n}", "hammer put", "to the end zone", "checks it in", "sorry", "{n} throws it away",
     "what's the score", "5-4 {t}", "{n} with the d", "{n} gets it", "on {t} we have {n}, {n} and {n}", "{n} is {n} on {t}", "{t}", "for",
-    "D'd by {n} for {t}", "{t} picks it up", "D-line comes on for {t}", "{n} is {n} and {n} is {n}", "{n}'s huck", "uh-huh", "the ends of",
+    "D'd by {n} for {t}", "{t} picks it up", "D-line comes on for {t}", "{n} is {n} and {n} is {n}", "{n}'s huck", "uh-huh",
 ]  # fmt: skip
 NAMES = ["kaia", "pikachu", "close crop", "the kid", "somebody", "gloves", "Adam Federbusch", "red shorts", "José", "Kaia Mann's"]
 
@@ -220,7 +220,7 @@ def test_defense_spellings(teams: list[yus.Team], text: str):
     assert [brief(e) for e in extractor.events] == [("Throw", "white", "kaia", "tristan", "flick", None, ""), ("Defense", "dark", "george", False)]
 
 
-@pytest.mark.parametrize("text", ["hammer to the endzone, caught by george", "hammer to the end zone caught by george", "Hammer the ends of George for score."])
+@pytest.mark.parametrize("text", ["hammer to the endzone, caught by george", "hammer to the end zone caught by george", "Hammer the end zone George for score."])
 def test_end_zone_spellings(teams: list[yus.Team], text: str):
     extractor = extract("Gloves picks it up for dark.", text, "Joe picks it up for white.", teams=teams)
     assert brief(extractor.events[0]) == ("Throw", "dark", "gloves", "george", "hammer", None, "CS")  # caught toward the end zone, then a pickup

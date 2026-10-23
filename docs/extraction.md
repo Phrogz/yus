@@ -184,8 +184,9 @@ about 7.7 s median for the live sliding window. The "first shown" columns are fo
   incomplete.
 - **Jersey numbers.** These need "number twelve"; a bare "to 12" reads as a score line. No substitution or infraction
   events are produced, and the ground truth has none.
-- **Where the "ends of" mishearing lives.** The extraction lexicon handles Whisper's "the ends of" for "end zone" (twice in
-  dev). The sport's mondegreen list (`yus/sports/ultimate`) may be a better home for it.
+- **Old transcripts.** Whisper's "the ends of" for "to the end zone" (twice in dev) is now a mondegreen of the sport
+  (`yus/sports/ultimate`), replaced when the transcript is made. A transcript made before that still says "the ends of", and
+  the extractor no longer reads it as the end zone.
 - **The test split is not fully blind.** An earlier spike's report described test-split errors before these rules were
   written. No rule targets them, but one dev-motivated rule happens to fix the trailing-"swing" case: a throw type or
   direction may describe the open throw across groups. Test numbers may therefore be slightly optimistic.

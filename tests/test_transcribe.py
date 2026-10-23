@@ -93,6 +93,8 @@ def test_multi_word_mondegreen_becomes_one_word(replacements: tr.Replacements) -
         ([" Scuba", " to"], ["scoober", "to"]),
         ([" Flick", " -hawk"], ["Flick", "-huck"]),
         ([" the", " endzone"], ["the", "end zone"]),
+        ([" Hammer", " the", " ends", " of", " George"], ["Hammer", "the end zone", "George"]),  # said: "hammer to the end zone to george"
+        ([" both", " ends", " of", " the", " court"], ["both", "ends", "of", "the", "court"]),
         ([" D", " by"], ["deed", "by"]),
     ],
 )

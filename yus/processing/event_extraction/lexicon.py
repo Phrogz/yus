@@ -105,7 +105,7 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.INTERCEPT, "with the interception|with the steal|picks it off|picks off")
     add(Tag.EZ_IN, "in the end zone|in the endzone|in end zone|in endzone|in the zone")
     add(Tag.EZ_TO, "to the end zone|into the end zone|to the endzone|into the endzone|toward the end zone|towards the end zone|to end zone")
-    add(Tag.EZ_TO, "the end zone|end zone|the endzone|endzone|the ends of|ends of")  # Whisper hears "to the end zone to" as "the ends of"
+    add(Tag.EZ_TO, "the end zone|end zone|the endzone|endzone")
     add(Tag.WALL, "off the wall|off a wall|off the glass|hits the wall|hit the wall|wall|glass")
     add(Tag.NET, "off the net|off the netting|into the net|hits the net|net|netting")
     add(Tag.PICKUP, "picked up by|picks it up|picks up|picked it up|picking it up|pick it up|picked up|pick up|picks it|picked|picks")
