@@ -14,7 +14,7 @@ detailed statistics are derived including team, player, and time-based breakdown
 * Timestamps: all extracted events include time-from-start-of-game.
 * Streamed processing: no post-game uploads of large files.
 * Accurate names: speech-to-text pre-informed of players to improve accuracy.
-* (later) Live stats: see stats develop during the game.
+* Live stats: see stats develop during the game.
 
 ## Approach
 
@@ -106,56 +106,79 @@ or likely that there will be confusion, causing two people to cover the same pla
 
 ## Running YUS
 
-### Initial Setup
+### Setup
 
-#### macOS
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and `ffmpeg` (macOS: `brew install ffmpeg`).
+2. Install the dependencies into `.venv`. On an Apple Silicon Mac (macOS 14+), add the `mlx` extra to run Whisper on the GPU:
 
-1. Install `uv` (Python package manager):
+   ```bash
+   uv sync --extra mlx   # Apple Silicon: mlx-whisper, large-v3-turbo
+   uv sync               # elsewhere: faster-whisper, large-v3 (CUDA if available, else CPU)
+   ```
 
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  ```
+   Run the commands below with `uv run`, or after `source .venv/bin/activate`. Whisper's model downloads on first use.
+3. Write a team file for each team: official names, real nicknames, and mishearings Whisper keeps making
+   (see [Team JSON Files](docs/usage.md#team-json-files); examples in `tests/data/team_*.json`).
 
-1. Install `ffmpeg` with Homebrew:
-
-  ```bash
-  brew install ffmpeg
-  ```
-
-1. Install Python virtual environment with all necessary dependencies. On Apple Silicon (macOS 14+), add the `mlx` extra
-   to transcribe on the GPU:
-
-  ```bash
-  uv sync --extra mlx
-  ```
-
-  Elsewhere (including Intel Macs and macOS 13 or older), use plain `uv sync`.
-
-### Running
-
-After the environment is set up, use the installed script:
+### Record a Game Live
 
 ```bash
-yus-transcribe /path/to/audio.wav
+yus-serve --team white.json --team dark.json --ssl-certfile yus.pem --ssl-keyfile yus-key.pem
 ```
 
-Optional flags:
+The server prints its links. Its pages:
+
+- `/commentate`: each commentator opens it on a phone, enters a name, picks the team they follow (or both), and taps the
+  big button. Their audio streams to the server, which transcribes it, extracts events and merges the commentators.
+- `/`: the score, the commentators and the latest events. `/dashboard/`: live stats.
+- `/admin`: identify the names and descriptions nobody has matched to a player yet ("red shorts" is Kaia Mann), and
+  "Finish game".
+
+Phones only give a page the microphone over HTTPS: [HTTPS for phones](docs/server.md#https-for-phones) covers a local
+certificate or a tunnel. Without `--ssl-*`, only a browser on the server's own computer can commentate
+(`http://localhost:8000/commentate`). Use `--key` when the server is reachable from the internet. The game is saved in
+`games/<start time>/` (transcripts, events, the official stream and the audio), and `--load DIR` resumes it.
+An M3 Pro keeps up with two commentators, without headroom for a third ([results](docs/results.md)).
+
+### Process a Recording Afterwards
 
 ```bash
-yus-transcribe /path/to/20250114T2030-0700.ogg \
-  --sport ultimate/indoor \
-  --team team_dump_and_drizzle.json \
-  --team team_category_5.json \
-  --terms-file /path/to/terms.txt \
-  --prompt "custom phrase" \
-  --text
+yus-transcribe game.ogg --team white.json --team dark.json                         # -> game.transcript.json
+yus-events game.transcript.json --team white.json --team dark.json -o game.events.json
+yus-stats game.events.json --team white.json --team dark.json --descriptions game-descriptions.json
 ```
 
-By default, the transcript is written next to the audio file as `*.transcript.json` (use `--text` for `*.transcript.txt`).
-Word timestamps are local wall-clock times starting from the recording's creation time in the file's metadata, else the time in
-its file name (e.g. `20250114T2030-0700`); pass `--recording-start` to set it explicitly.
+- `yus-transcribe` times words from the recording's start: its metadata, or a name like `20250114T2030-0700.ogg`.
+- `yus-events` keeps names as spoken and prints any identifications it heard ("red shorts is kaia").
+- The [descriptions file](docs/usage.md#game-description-files) says who this game's descriptions mean ("the kid" is
+  Serayan Knappe-Butler). `yus-stats` lists the names still unresolved; `--format csv` or `html` writes tables.
+- `yus-score` compares events with a hand-made ground truth (see [extraction.md](docs/extraction.md#command-line)).
+- There is no command to merge several commentators' recordings; replay them into `yus-serve` instead (below).
 
-On Apple Silicon Macs (macOS 14+), `uv sync --extra mlx` installs `mlx-whisper`, and transcription then runs on the GPU with the
-`large-v3-turbo` model. Otherwise it uses `faster-whisper` (`large-v3`, on CUDA when available). Choose explicitly with
-`--backend mlx` or `--backend faster-whisper`.
-See [docs/usage.md](docs/usage.md) for all options.
+### Replay a Recording (Demos, Tests)
+
+```bash
+yus-serve --team white.json --team dark.json --host 127.0.0.1 --game-dir /tmp/demo
+yus-replay game.ogg --commentator Gavin --speed 1          # --speed 0: as fast as possible
+yus-replay other.ogg --commentator Sam --focus dark        # optional second commentator, at the same time
+```
+
+`yus-replay` streams a file to the server as a phone would. Watch `http://127.0.0.1:8000/dashboard/`, then finish the game
+on `/admin`. The game is timed on the day of the replay; `yus-replay` prints when it stamped the file's start, and
+`yus-score --shift` maps events back onto the recording ([results.md](docs/results.md#reproducing)).
+
+### Documentation
+
+| doc | covers |
+|---|---|
+| [architecture.md](docs/architecture.md) | the phases, what is built and what is not |
+| [usage.md](docs/usage.md) | `yus-transcribe`, team files, game description files |
+| [live_transcription.md](docs/live_transcription.md) | transcribing as audio arrives; `yus-live-transcribe` |
+| [extraction.md](docs/extraction.md) | `yus-events`, `yus-score`. [event_extraction_design.md](docs/event_extraction_design.md) is the first, LLM-based proposal |
+| [merging.md](docs/merging.md) | merging commentators' event streams |
+| [stats.md](docs/stats.md) | the stats tables; `yus-stats` |
+| [session.md](docs/session.md) | `GameSession`, which runs the pipeline for one game, and its saved files |
+| [server.md](docs/server.md) | `yus-serve`, the commentate page, HTTPS, `yus-replay` |
+| [dashboard.md](docs/dashboard.md) | the live stats dashboard |
+| [results.md](docs/results.md) | the whole pipeline measured on a real game |
+| [CONTRIBUTING.md](docs/CONTRIBUTING.md) | how to help; tests run with `uv run pytest -q` |

@@ -286,16 +286,17 @@ path.write_text(resolver.descriptions.model_dump_json(indent=2))  # keep what wa
 
 Live, re-resolve the raw stream whenever an event or a description arrives (a millisecond or two for a 200-event game).
 [tests/data/gruindoor_20250114T2030-descriptions.json](../tests/data/gruindoor_20250114T2030-descriptions.json) is a complete
-example. Not built yet: turning spoken statements ("red shorts is Kaia") into descriptions, and fuzzy name matching.
+example. Spoken identifications ("red shorts is Kaia") become descriptions live, in `GameSession` (see [session.md](session.md));
+`yus-events` only prints them, for you to add to the file. Not built yet: fuzzy name matching.
 
 ## Next Steps
 
 After transcription, the structured transcript can be:
 
 1. **Reviewed and corrected** - Check for any remaining errors
-2. **Converted to events** - Extract game actions (throws, scores, etc.)
+2. **Converted to events** - Extract game actions (throws, scores, etc.) with `yus-events` ([extraction.md](extraction.md))
 3. **Resolved to players** - Map the names and descriptions commentators used to roster players (see [Game Description Files](#game-description-files))
-4. **Analyzed for statistics** - Generate player and team stats
-5. **Visualized** - Create interactive game visualizations
+4. **Analyzed for statistics** - Generate player and team stats with `yus-stats` ([stats.md](stats.md))
+5. **Visualized** - Replay the recording into `yus-serve` and watch its dashboard ([server.md](server.md), [dashboard.md](dashboard.md))
 
-See the project documentation for information on event extraction and statistics generation.
+The [README](../README.md#running-yus) walks through a whole game, live or afterwards.
