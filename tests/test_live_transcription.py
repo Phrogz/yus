@@ -535,5 +535,7 @@ def test_live_wer_on_real_audio() -> None:
     reference = yus.Transcript.model_validate_json((DATA / "gruindoor_20250114T2030-transcript.json").read_text())
     expected = [t for w in reference.words if w.start < cut for t in tokens(w.text)]
     heard = [t for w in lt.transcript.words if w.start < cut for t in tokens(w.text)]
-    assert wer(expected, heard) < 0.25
-    assert live.quantile(timings.word_latency, 0.5) < 12.0
+    # Six runs at these settings measured 0.19-0.28 on this span: it has only 101 reference words, and each run's windows start at slightly
+    # different times (docs/live_transcription.md, Limitations). Over the whole game: 0.12-0.14.
+    assert wer(expected, heard) < 0.3
+    assert live.quantile(timings.word_latency, 0.5) < 9.0  # measured 6.5-6.7 s over the whole game
