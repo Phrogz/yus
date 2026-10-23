@@ -132,6 +132,7 @@ def transcribe(
             try:
                 shutil.copyfile(output, part := keep.with_name(keep.name + ".part"))
                 part.replace(keep)
+                print(f"Transcript kept as {keep}", file=sys.stderr)  # not where yus-transcribe says it wrote it
             except OSError as error:
                 print(f"Warning: could not keep the transcript as {keep}: {error}", file=sys.stderr)
         return load_transcript(output)

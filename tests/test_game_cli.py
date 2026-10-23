@@ -187,11 +187,14 @@ def recording(tmp_path: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def test_a_recording_is_transcribed_once(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, whisper: list[list[str]], recording: pathlib.Path):
+def test_a_recording_is_transcribed_once(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], whisper: list[list[str]], recording: pathlib.Path
+):
     """Its transcript is kept beside it; running again, refused or forced, does not transcribe it again."""
     monkeypatch.chdir(tmp_path)
     argv = [*TEAMS, "--commentator", f"A={recording}"]
     assert main(argv) == 0 and len(whisper) == 1 and "2025-01-14T20:30:00" in whisper[0]
+    assert f"Transcript kept as {recording.parent / '20250114T2030-0700.transcript.json'}" in capsys.readouterr().err
     assert (tmp_path / "games" / "20250114T203000" / "session.json").exists()  # named by the recording's start
     assert (recording.parent / "20250114T2030-0700.transcript.json").read_text() == TRANSCRIPT.read_text()
     with pytest.raises(SystemExit, match="already holds a game"):
