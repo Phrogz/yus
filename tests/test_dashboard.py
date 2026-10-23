@@ -169,8 +169,10 @@ def test_serves_under_its_prefix_mounted_or_not(game, descriptions):
     assert page.status_code == 200
     config = json.loads(page.text.split('<script id="_dash-config" type="application/json">')[1].split("</script>")[0])
     assert config["url_base_pathname"] is None and config["requests_pathname_prefix"] == "/dashboard/"
-    assert client.get("/dashboard/_dash-layout").status_code == 200
-    assert '"interval": 500' in client.get("/dashboard/_dash-layout").text.replace(":500", ": 500")
+    layout = client.get("/dashboard/_dash-layout")
+    assert layout.status_code == 200
+    assert next(c for c in components(layout.get_json()) if c["type"] == "Interval")["props"]["interval"] == 500
+    assert client.get("/").status_code == 200  # given the whole site, it also answers outside its prefix
     mounted = Client(DispatcherMiddleware(Response("not found", status=404), {"/dashboard": app.server}))  # like Starlette's Mount
     assert mounted.get("/dashboard/").status_code == 200
     assert mounted.get("/dashboard/_dash-dependencies").status_code == 200
