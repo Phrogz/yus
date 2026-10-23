@@ -26,6 +26,7 @@ yus-game --team white.json --team dark.json --descriptions game-descriptions.jso
 `--commentator NAME=PATH[@OFFSET][:FOCUS]`, once per commentator; the first is the clock reference.
 
 - `PATH`: a recording, which `yus-transcribe` transcribes in its own process, or a yus `Transcript` JSON (`.json`), used as it is.
+  A JSON without `groups` (an event stream, a team file) or without words is refused.
 - `@OFFSET`: seconds added to this commentator's times, e.g. `@-42` for a recording whose clock is 42 s ahead. Merging
   estimates offsets up to 20 s by itself, so give one only for clocks further apart.
 - `:FOCUS`: the team this commentator follows (any of its names). In a merge conflict on that team's events, they win.
@@ -35,11 +36,22 @@ yus-game --team white.json --team dark.json --descriptions game-descriptions.jso
 |---|---|
 | `--team` | team JSON files, one per team (two or more) |
 | `--descriptions` | the game's descriptions file ([usage.md](usage.md#game-description-files)) |
-| `--game-dir DIR` | the game directory (default `games/<time of the first word>`); refused if it holds a game, unless `--force` |
+| `--game-dir DIR` | the game directory (default `games/<start>`, see [Times](#times)); refused if it holds a game, unless `--force` |
 | `--html FILE` | the report (default `DIR/report.html`) |
 | `--csv-dir DIR2` | the stats tables (default `DIR/stats/`) |
 | `--asr`, `--model` | Whisper backend and model for recordings (default: `yus-transcribe`'s) |
 | `--stop S` | transcribe only the first S seconds of each recording (a quick try) |
+| `--retranscribe` | transcribe recordings again, though their transcripts are kept |
+
+Before anything is transcribed, these are checked: the commentators, the descriptions file against the rosters, the
+transcript JSONs, and the game directory (if its default name is known by then: see [Limitations](#limitations)).
+
+### Transcripts of recordings
+
+Each recording's transcript is kept beside it, as `yus-transcribe` writes it: `game.ogg` → `game.transcript.json`
+(`game.stop120.transcript.json` with `--stop 120`). Running again uses it instead of transcribing, and says so; a transcript
+`yus-transcribe` wrote before is used too. If the recording's folder can't be written, a warning says so and the transcript is
+only in the game directory.
 
 ### Times
 
@@ -48,12 +60,17 @@ A recording is timed from its start: the creation time in its metadata, else a t
 commentator's recording (or their transcript's first word), and a note says so: give `@OFFSET` if it started more than
 20 s apart.
 
+The game starts with the first commentator's recording (its start, `@OFFSET` added), else their first word. That names the
+default game directory and is 0:00 for the report's times. Word times with a UTC offset are taken in their own zone, as
+`compute_stats` takes them.
+
 ## Outputs
 
 - **Game directory**, as `GameSession.save()` writes it ([session.md](session.md#files)): `game.json`, `descriptions.json`,
   `transcripts/`, `events/`, `official.json`, `session.json`. Show it on the dashboard with
   `yus-serve --load DIR --asr none` (`--asr none` skips loading Whisper). The transcripts there are on the game's clock,
-  `@OFFSET` applied: to run again, pass them without `@OFFSET`.
+  `@OFFSET` applied: to run from them, pass them without `@OFFSET`. `--force` also deletes the replaced game's
+  `transcripts/` and `events/` files of commentators it no longer has.
 - **HTML report**, one page: the score; the commentators (follows, file, groups, events, clock offset); what to check;
   the team box score; each team's players (names that are not roster players in italics); the points (offense, scorer, hold
   or break, assist → goal, running score); and every event, with who reported it and what the commentators disagreed on.
@@ -64,11 +81,12 @@ commentator's recording (or their transcript's first word), and a note says so: 
 ### What to fix
 
 - **Unresolved names**, per team, most mentioned first, and the roster players no event names (likely identities). Add the
-  names to the descriptions file and run again (`--force`, with the game directory's transcripts to skip transcribing).
+  names to the descriptions file and run the same command again with `--force` (recordings' transcripts are reused).
 - **Team conflicts:**
   - a name said for one team that only another team's player answers to (in the team files or the descriptions):
     `"the kid" (2x for Category 5) is Dump & Drizzle's Serayan Knappe-Butler`. The event's team is wrong, or the name needs
-    a description. Read from each commentator's events as extracted.
+    a description: one for the team said, a player or an unknown player's label, clears it. Read from each commentator's
+    events as extracted (`PlayerResolver.team_conflicts`).
   - stretches of play that two commentators put on different teams, e.g.
     `2:48–3:04: 7 throws A put on Dump & Drizzle, B on Category 5`. Merging pairs only events of one team, so both reports
     stay in the official stream. Found from events reported by one commentator each, of one kind and different teams,
@@ -113,7 +131,10 @@ test after.
   merge keeps one offset per commentator.
 - **Recordings without a start time** are assumed to start with the first commentator's.
 - **Transcribing** runs one recording after another: about 1.5 minutes for the 16-minute game on an M3 Pro (from the slow
-  test's decoding rate, not timed). Transcripts are kept only in the game directory.
+  test's decoding rate, not timed). A kept transcript is reused even if `--model`, `--asr` or the team files changed: pass
+  `--retranscribe`.
+- **A recording without a start time**, first and not transcribed yet, names the game directory only once transcribed, so a
+  game already there is found only then (its transcript is kept).
 - **Extraction and merging** keep their own limits ([extraction.md](extraction.md#limitations), [merging.md](merging.md#limitations)),
   e.g. "in the end zone? nope" still counts as a goal.
 - **Team conflicts** between commentators are found only for events nobody else reported; a whole possession put on the

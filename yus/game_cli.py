@@ -17,19 +17,22 @@ import argparse
 import collections
 import datetime as dt
 import html
+import json
 import math
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 import pandas as pd
 import pydantic
 
 import yus
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
-from yus.processing.event_unification.players import mentions
 from yus.processing.stats import GameStats
+from yus.processing.stats.compute import SCORE_PREFIX
 from yus.processing.transcription import transcribe as tr
 from yus.session import GameSession, GameSnapshot
 from yus.web.server import event_text
@@ -57,22 +60,24 @@ def parse_source(text: str, teams: list[yus.Team]) -> Source:
     name, equals, rest = text.partition("=")
     if not equals or not name.strip() or not rest:
         raise ValueError(f"{text!r} is not NAME=PATH[@OFFSET][:FOCUS]")
-    offset = focus = None
-    if not pathlib.Path(rest).exists() and ":" in rest:
-        rest, _, focus = rest.rpartition(":")
-        if PlayerResolver(teams).team_index(focus) is None:
-            raise ValueError(f"{text!r}: no team is called {focus!r}; teams: {[team.names for team in teams]}")
-    if not pathlib.Path(rest).exists() and "@" in rest:
-        rest, _, seconds = rest.rpartition("@")
+    path, offset, focus, seconds = rest, None, None, ""
+    if not pathlib.Path(path).exists() and ":" in path:
+        path, _, focus = path.rpartition(":")
+    if not pathlib.Path(path).exists() and "@" in path:
+        path, _, seconds = path.rpartition("@")
         try:
             offset = float(seconds)
         except ValueError:
             offset = math.nan
-        if not math.isfinite(offset):
-            raise ValueError(f"{text!r}: the offset {seconds!r} is not a number of seconds")
-    if not pathlib.Path(rest).is_file():
-        raise ValueError(f"{text!r}: no file {rest}")
-    return Source(name=name.strip(), path=pathlib.Path(rest), offset=offset, focus=focus)
+    bad_focus = focus is not None and PlayerResolver(teams).team_index(focus) is None
+    bad_offset = offset is not None and not math.isfinite(offset)
+    if not pathlib.Path(path).is_file():
+        raise ValueError(f"{text!r}: no file {rest if bad_focus or bad_offset else path}")
+    if bad_focus:
+        raise ValueError(f"{text!r}: no team is called {focus!r}; teams: {[team.names for team in teams]}")
+    if bad_offset:
+        raise ValueError(f"{text!r}: the offset {seconds!r} is not a number of seconds")
+    return Source(name=name.strip(), path=pathlib.Path(path), offset=offset, focus=focus)
 
 
 def recording_start(path: pathlib.Path) -> dt.datetime | None:
@@ -81,11 +86,38 @@ def recording_start(path: pathlib.Path) -> dt.datetime | None:
     return found[0] if found else tr.recording_start_from_filename(path)
 
 
+def transcript_path(recording: pathlib.Path, stop: float | None = None) -> pathlib.Path:
+    """Where a recording's transcript is kept: beside it, as yus-transcribe writes it (with `stop`, .stopS.transcript.json)."""
+    return recording.with_suffix(".transcript.json" if stop is None else f".stop{stop:g}.transcript.json")
+
+
+def load_transcript(path: pathlib.Path) -> yus.Transcript:
+    """A yus Transcript JSON. ValueError if the file is not one (no `groups`: an event stream, a team file) or has no words."""
+    try:
+        text = path.read_text()
+        data = json.loads(text)
+    except (OSError, ValueError) as error:
+        raise ValueError(f"could not read {path}: {error}") from error
+    if not isinstance(data, dict) or not isinstance(data.get("groups"), list):
+        raise ValueError(f"{path} is not a yus transcript: it has no groups")
+    transcript = yus.Transcript.model_validate_json(text)
+    if not transcript.words:
+        raise ValueError(f"{path} has no words: leave this commentator out")
+    return transcript
+
+
 def transcribe(
-    audio: pathlib.Path, team_files: list[pathlib.Path], start: dt.datetime, *, asr: str = "auto", model: str | None = None, stop: float | None = None
+    audio: pathlib.Path,
+    team_files: list[pathlib.Path],
+    start: dt.datetime,
+    keep: pathlib.Path | None = None,
+    *,
+    asr: str = "auto",
+    model: str | None = None,
+    stop: float | None = None,
 ) -> yus.Transcript:
-    """The recording transcribed by yus-transcribe, its words timed from `start`. It runs in its own process, which gives Whisper's
-    memory back when it is done. `stop`: decode only this many seconds."""
+    """The recording transcribed by yus-transcribe, its words timed from `start`, also written to `keep`. It runs in its own process,
+    which gives Whisper's memory back when it is done. `stop`: decode only this many seconds."""
     with tempfile.TemporaryDirectory(prefix="yus-game-") as directory:
         output = pathlib.Path(directory) / "transcript.json"
         command = [sys.executable, "-m", "yus.processing.transcription.transcribe", str(audio), "--output", str(output), "--recording-start", start.isoformat(), "--backend", asr]
@@ -96,7 +128,13 @@ def transcribe(
             subprocess.run(command, check=True)
         except subprocess.CalledProcessError as error:
             raise SystemExit(f"Error: yus-transcribe failed on {audio} (exit status {error.returncode})") from error
-        return yus.Transcript.model_validate_json(output.read_text())
+        if keep is not None:
+            try:
+                shutil.copyfile(output, part := keep.with_name(keep.name + ".part"))
+                part.replace(keep)
+            except OSError as error:
+                print(f"Warning: could not keep the transcript as {keep}: {error}", file=sys.stderr)
+        return load_transcript(output)
 
 
 def shifted(transcript: yus.Transcript, seconds: float) -> yus.Transcript:
@@ -113,23 +151,51 @@ def first_word(transcript: yus.Transcript) -> dt.datetime | None:
     return next((group.words[0].start for group in transcript.groups if group.words), None)
 
 
-def read_transcripts(sources: list[Source], team_files: list[pathlib.Path], *, asr: str = "auto", model: str | None = None, stop: float | None = None) -> list[yus.Transcript]:
-    """Each source's transcript, its times moved by its offset. A recording is timed from its start (metadata or file name), else
-    from the first commentator's: their recording's start, or their transcript's first word."""
+def saved_transcript(source: Source, stop: float | None = None, again: bool = False) -> yus.Transcript | None:
+    """The source's transcript if it needs no transcribing: its JSON, or the one kept beside its recording (unless `again`).
+    ValueError for a file that is not a transcript."""
+    if not source.audio:
+        return load_transcript(source.path)
+    kept = transcript_path(source.path, stop)
+    return load_transcript(kept) if kept.exists() and not again else None
+
+
+def game_start(source: Source, transcript: yus.Transcript | None) -> dt.datetime | None:
+    """When the first commentator's record starts, which names the game: their recording's start, else their first word, moved by
+    their offset; None while that is not known (a recording without a start, not transcribed yet)."""
+    start = (recording_start(source.path) if source.audio else None) or (first_word(transcript) if transcript is not None else None)
+    return start + dt.timedelta(seconds=source.offset) if start is not None and source.offset else start
+
+
+def read_transcripts(
+    sources: list[Source],
+    saved: list[yus.Transcript | None],
+    team_files: list[pathlib.Path],
+    *,
+    asr: str = "auto",
+    model: str | None = None,
+    stop: float | None = None,
+) -> list[yus.Transcript]:
+    """Each source's transcript (`saved`, else its recording transcribed and kept beside it), its times moved by its offset. A
+    recording is timed from its start (metadata or file name), else from the first commentator's: their recording's start, or
+    their transcript's first word."""
     transcripts = []
     reference: dt.datetime | None = None
-    for source in sources:
-        if source.audio:
-            start = recording_start(source.path)
+    for source, transcript in zip(sources, saved):
+        start = recording_start(source.path) if source.audio else None
+        if transcript is not None:
+            if source.audio:
+                print(f"{source.name}: using {transcript_path(source.path, stop)} (--retranscribe to transcribe {source.path.name} again)", file=sys.stderr)
+        else:
             if start is None:
                 start = reference or dt.datetime.now().replace(microsecond=0)
                 print(f"{source.name}: {source.path.name} does not say when it started; taken as {start:%Y-%m-%d %H:%M:%S} (give @OFFSET if not)", file=sys.stderr)
             print(f"Transcribing {source.name}: {source.path}", file=sys.stderr, flush=True)
-            transcript = transcribe(source.path, team_files, start, asr=asr, model=model, stop=stop)
-            reference = reference or start
-        else:
-            transcript = yus.Transcript.model_validate_json(source.path.read_text())
-            reference = reference or first_word(transcript)
+            try:
+                transcript = transcribe(source.path, team_files, start, transcript_path(source.path, stop), asr=asr, model=model, stop=stop)
+            except ValueError as error:
+                raise SystemExit(f"Error: {error}") from error
+        reference = reference or start or first_word(transcript)
         transcripts.append(shifted(transcript, source.offset) if source.offset else transcript)
     return transcripts
 
@@ -152,25 +218,21 @@ def process(game: yus.Game, descriptions: GameDescriptions | None, sources: list
 
 
 def wrong_team_names(snap: GameSnapshot) -> list[str]:
-    """Names said for one team that no player of it answers to, but a player of another team does ("tristan" said for black is
-    white's Tristan Weber): the event's team is wrong, or the name needs a description. From each commentator's raw events."""
+    """Names said for one team that nobody of it answers to (no player, no description), but one player of another team does
+    ("tristan" said for black is white's Tristan Weber): the event's team is wrong, or the name needs a description. From each
+    commentator's raw events (PlayerResolver.team_conflicts)."""
     resolver = PlayerResolver(snap.game.teams, snap.descriptions)
-    teams = resolver.teams
-    forms: dict[tuple[int, int, str], collections.Counter[str]] = collections.defaultdict(collections.Counter)
-    said: dict[tuple[int, int, str], set[str]] = collections.defaultdict(set)
+    forms: dict[tuple[str, str, str], collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    said: dict[tuple[str, str, str], set[str]] = collections.defaultdict(set)
     for c in snap.commentators:
-        for team, name in mentions(snap.raw[c.name]):
-            here = resolver.team_index(team)
-            if here is None or resolver.resolve(name, team, c.name) in teams[here].players:
-                continue
-            for i, other in enumerate(teams):
-                if i != here and (player := resolver.resolve(name, other.names[0], c.name)) in other.players:
-                    forms[(here, i, player)][name] += 1
-                    said[(here, i, player)].add(c.name)
+        for conflict in resolver.team_conflicts(snap.raw[c.name], c.name):
+            key = (conflict.team, conflict.roster_team, resolver.resolve(conflict.name, conflict.roster_team, c.name) or conflict.name)
+            forms[key][conflict.name] += 1
+            said[key].add(c.name)
     found = []
-    for (here, i, player), counts in sorted(forms.items(), key=lambda item: -item[1].total()):
-        by = f", by {' and '.join(sorted(said[(here, i, player)]))}" if len(snap.commentators) > 1 else ""
-        found.append(f'"{counts.most_common(1)[0][0]}" ({counts.total()}x for {teams[here].names[0]}{by}) is {teams[i].names[0]}\'s {player}')
+    for (team, roster_team, player), counts in sorted(forms.items(), key=lambda item: -item[1].total()):
+        by = f", by {' and '.join(sorted(said[(team, roster_team, player)]))}" if len(snap.commentators) > 1 else ""
+        found.append(f'"{counts.most_common(1)[0][0]}" ({counts.total()}x for {team}{by}) is {roster_team}\'s {player}')
     return found
 
 
@@ -229,13 +291,13 @@ def _sides(events: list[yus.Event], source: list[int], match: tuple[int, int]) -
 
 
 def clock(when: dt.datetime, start: dt.datetime | None) -> str:
-    """Game time, e.g. "4:05" (the time of day without a start)."""
-    try:
-        seconds = round((when - start).total_seconds()) if start is not None else None
-    except TypeError:  # naive and aware
-        seconds = None
-    if seconds is None:
+    """Game time, e.g. "4:05" (the time of day without a start). A time with a UTC offset is made naive as compute_stats does: in
+    its own zone, or this computer's for UTC."""
+    if start is None:
         return f"{when:%H:%M:%S}"
+    if when.utcoffset() is not None and start.utcoffset() is None:
+        when = when.astimezone(when.tzinfo if when.utcoffset() else None).replace(tzinfo=None)
+    seconds = round((when - start).total_seconds())
     sign, seconds = "-" if seconds < 0 else "", abs(seconds)
     return f"{sign}{seconds // 60}:{seconds % 60:02d}"
 
@@ -338,7 +400,7 @@ def report_html(snap: GameSnapshot, sources: list[Source]) -> str:
     parts = [
         f'<p class="meta">Indoor Ultimate · {game.when:%A %d %B %Y, %H:%M}</p><h1>{score}</h1>',
         f'<p class="meta">{len(snap.official.events)} events from {_plural(len(snap.commentators), "commentator")} · {_plural(len(stats.points), "point")}'
-        f" · {span} from the first words</p>",
+        f" · the last at {span}</p>",
         "<h2>Commentators</h2>",
         _commentators(snap, sources),
         _checks(snap),
@@ -416,7 +478,7 @@ def _points(stats: GameStats) -> str:
         scored = point in goals.index
         result = "" if pd.isna(row["hold"]) else "hold" if row["hold"] else "break"
         how = f"{_name(row['assist'])} → {_name(row['scorer'])}" if scored else "in play"
-        running = "–".join(str(goals.at[point, f"score_{team}"]) for team in teams) if scored else ""
+        running = "–".join(str(goals.at[point, SCORE_PREFIX + team]) for team in teams) if scored else ""
         rows.append(
             [
                 str(point),
@@ -496,13 +558,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="A commentator: their recording (transcribed) or yus transcript JSON; OFFSET seconds added to their times (merging estimates up to 20 s more);"
         " FOCUS the team they follow. Repeat for each; the first is the clock reference.",
     )
-    parser.add_argument("--game-dir", type=pathlib.Path, help="Directory for the game, as yus-serve --load opens it (default: games/<first word's time>).")
+    parser.add_argument(
+        "--game-dir", type=pathlib.Path, help="Directory for the game, as yus-serve --load opens it (default: games/<start of the first commentator's recording or words>)."
+    )
     parser.add_argument("--html", type=pathlib.Path, help="HTML report (default: GAME_DIR/report.html).")
     parser.add_argument("--csv-dir", type=pathlib.Path, help="Directory for the stats tables as CSV (default: GAME_DIR/stats).")
     parser.add_argument("--force", action="store_true", help="Replace a game already saved in the game directory.")
     parser.add_argument("--asr", choices=tr.BACKENDS, default="auto", help="Whisper backend for recordings (default: auto, as yus-transcribe).")
     parser.add_argument("--model", help="Whisper model for recordings (default: yus-transcribe's).")
     parser.add_argument("--stop", type=float, help="Transcribe only this many seconds of each recording (a quick try).")
+    parser.add_argument("--retranscribe", action="store_true", help="Transcribe recordings again, replacing the transcripts kept beside them.")
     return parser
 
 
@@ -515,26 +580,34 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--commentator: give at least one, NAME=PATH")
     teams = tr.load_teams_from_files(args.teams)
     try:
+        descriptions = GameDescriptions.model_validate_json(args.descriptions.read_text()) if args.descriptions else None
+        PlayerResolver(teams, descriptions)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"Error: could not load {args.descriptions or 'the teams'}: {error}") from error
+    try:
         sources = [parse_source(text, teams) for text in args.commentators]
     except ValueError as error:
         parser.error(f"--commentator {error}")
     if len(names := [source.name for source in sources]) != len(set(names)):
         parser.error(f"--commentator: two commentators have one name: {names}")
     try:
-        descriptions = GameDescriptions.model_validate_json(args.descriptions.read_text()) if args.descriptions else None
-    except (OSError, pydantic.ValidationError) as error:
-        raise SystemExit(f"Error: could not load {args.descriptions}: {error}") from error
-    if args.game_dir is not None:
-        _check_free(args.game_dir, args.force)
+        saved = [saved_transcript(source, args.stop, args.retranscribe) for source in sources]
+    except ValueError as error:
+        raise SystemExit(f"Error: {error}") from error
+    when = game_start(sources[0], saved[0])
+    if args.game_dir is not None or when is not None:
+        _check_free(args.game_dir or _default_dir(when), args.force)  # before transcribing
 
-    transcripts = read_transcripts(sources, args.teams, asr=args.asr, model=args.model, stop=args.stop)
-    when = next((word for t in transcripts if (word := first_word(t)) is not None), None) or dt.datetime.now().replace(microsecond=0)
-    directory = args.game_dir or pathlib.Path("games") / f"{when:%Y%m%dT%H%M%S}"
-    _check_free(directory, args.force)
+    transcripts = read_transcripts(sources, saved, args.teams, asr=args.asr, model=args.model, stop=args.stop)
+    when = when or first_word(transcripts[0]) or dt.datetime.now().replace(microsecond=0)
+    directory = args.game_dir or _default_dir(when)
+    replacing = _check_free(directory, args.force)
     try:
         session = process(yus.Game(sport=SPORT, when=when, teams=teams), descriptions, sources, transcripts, directory)
     except ValueError as error:
         raise SystemExit(f"Error: {error}") from error
+    if replacing:
+        remove_stale(directory)
     snap = session.snapshot()
 
     report = args.html or directory / "report.html"
@@ -546,9 +619,31 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _check_free(directory: pathlib.Path, force: bool) -> None:
-    if (directory / "session.json").exists() and not force:
+def remove_stale(directory: pathlib.Path) -> list[pathlib.Path]:
+    """Delete the transcripts/ and events/ files of commentators that the game saved in `directory` no longer has (left by the
+    game it replaced); the files deleted."""
+    saved = json.loads((directory / "session.json").read_text())
+    keep = {_file_key(f"{entry['file']}.json") for entry in saved["commentators"]}
+    stale = [path for folder in ("transcripts", "events") for path in sorted((directory / folder).glob("*.json")) if _file_key(path.name) not in keep]
+    for path in stale:
+        path.unlink()
+    return stale
+
+
+def _file_key(name: str) -> str:
+    """File names that are one file on a disk that ignores case and Unicode normalization (macOS) have one key."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def _default_dir(when: dt.datetime) -> pathlib.Path:
+    return pathlib.Path("games") / f"{when:%Y%m%dT%H%M%S}"
+
+
+def _check_free(directory: pathlib.Path, force: bool) -> bool:
+    """Whether `directory` holds a game, which `force` lets this run replace; SystemExit if it does without `force`."""
+    if (held := (directory / "session.json").exists()) and not force:
         raise SystemExit(f"Error: {directory} already holds a game: pass --force to replace it, or another --game-dir")
+    return held
 
 
 if __name__ == "__main__":
