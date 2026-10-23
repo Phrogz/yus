@@ -7,6 +7,6 @@ Steps, in order:
 """
 
 from yus.processing.event_unification.merge import Conflict, LiveMerger, MergeResult, NameLink, merge_streams
-from yus.processing.event_unification.players import GameDescriptions, PlayerDescription, PlayerResolver
+from yus.processing.event_unification.players import GameDescriptions, PlayerDescription, PlayerResolver, TeamConflict
 
-__all__ = ["Conflict", "GameDescriptions", "LiveMerger", "MergeResult", "NameLink", "PlayerDescription", "PlayerResolver", "merge_streams"]
+__all__ = ["Conflict", "GameDescriptions", "LiveMerger", "MergeResult", "NameLink", "PlayerDescription", "PlayerResolver", "TeamConflict", "merge_streams"]

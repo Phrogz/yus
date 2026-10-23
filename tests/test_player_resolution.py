@@ -151,11 +151,11 @@ def test_a_name_only_another_team_has_resolves_to_its_player(game: yus.Game, des
         ("blondie", "Serayan Knappe-Butler"),  # "the kid" is described for white
     ]
     assert resolver.team_conflicts(raw) == [
-        (0, "Dump & Drizzle", "Category 5", "naked"),
-        (1, "Category 5", "Dump & Drizzle", "joe"),
-        (2, "Category 5", "Dump & Drizzle", "tristan"),
-        (3, "Category 5", "Dump & Drizzle", "tristan"),
-        (4, "Category 5", "Dump & Drizzle", "the kid"),
+        (0, "Dump & Drizzle", "Category 5", "naked", "Collin Ruprecht"),
+        (1, "Category 5", "Dump & Drizzle", "joe", "Joe Oaks"),
+        (2, "Category 5", "Dump & Drizzle", "tristan", "Tristan Weber"),
+        (3, "Category 5", "Dump & Drizzle", "tristan", "Tristan Weber"),
+        (4, "Category 5", "Dump & Drizzle", "the kid", "Serayan Knappe-Butler"),
     ]
     assert [e.team for e in resolved.events] == [e.team for e in raw.events]  # correcting the team is up to the caller
     assert {name for _, name, _ in resolver.unresolved(raw)} == {"hot", "power", "blondie"}
@@ -175,7 +175,8 @@ def test_names_cross_teams_only_to_one_player():
     said = itertools.product(["white", "red", "green"], names)  # green has no roster: its players are unknown, not absent
     raw = yus.EventStream(events=[ultimate.Defense(when=datetime.datetime(2025, 1, 14, 20, 40, n), team=team, player=name) for n, (team, name) in enumerate(said)])
     conflicts = resolver.team_conflicts(raw, "Gavin")
-    assert {(c.team, c.name): resolver.resolve_event(raw.events[c.event], "Gavin").player for c in conflicts} == {
+    assert all(resolver.resolve_event(raw.events[c.event], "Gavin").player == c.player for c in conflicts)
+    assert {(c.team, c.name): c.player for c in conflicts} == {
         ("white", "jojo"): "Jo Kim",
         ("red", "jojo"): "Jo Kim",
         ("white", "hat"): "Jo Kim",  # a description crosses to the team it was given for

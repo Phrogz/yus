@@ -76,6 +76,7 @@ class TeamConflict(NamedTuple):
     team: str  # the event's team, by its first name
     roster_team: str  # the team of the player the name resolved to, by its first name
     name: str  # the name as said
+    player: str  # the player it resolved to
 
 
 class PlayerResolver:
@@ -152,15 +153,16 @@ class PlayerResolver:
         return yus.EventStream(game=stream.game, transcript=stream.transcript, events=events)
 
     def team_conflicts(self, stream: yus.EventStream, commentator: str | None = None) -> list[TeamConflict]:
-        """The events of a raw stream with a name that resolved to another team's player, in stream order (one entry per name):
-        the event's team is likely wrong, or the name misheard."""
+        """The events of a raw stream with a name that resolved to another team's player, in stream order (one entry per name,
+        with that player): the event's team is likely wrong, or the name misheard."""
         commentator = self._commentator(stream, commentator)
         found = []
         for i, event in enumerate(stream.events):
             index = self.team_index(getattr(event, "team", None))
             for name in (getattr(event, field) for field in _name_fields(event)):
-                if index is not None and (other := self._resolve(name, index, commentator)[1]) is not None:
-                    found.append(TeamConflict(i, self._team_name(index), self._team_name(other), name))
+                player, other = self._resolve(name, index, commentator)
+                if index is not None and other is not None and name and player:
+                    found.append(TeamConflict(i, self._team_name(index), self._team_name(other), name, player))
         return found
 
     def unresolved(self, stream: yus.EventStream, commentator: str | None = None) -> list[tuple[str, str, int]]:
