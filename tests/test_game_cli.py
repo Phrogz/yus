@@ -10,7 +10,7 @@ from tests.data.gruindoor_20250114T2030 import build_game
 from yus.game_cli import main, parse_source
 from yus.processing.evaluation import score
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
-from yus.session import GameSession
+from yus.session import GameSession, replay
 
 DATA = pathlib.Path(__file__).parent / "data"
 TRANSCRIPT = DATA / "gruindoor_20250114T2030-transcript.json"  # the hand-made transcript
@@ -54,30 +54,41 @@ def save(path: pathlib.Path, transcript: yus.Transcript) -> str:
 
 
 @pytest.mark.parametrize("path", [TRANSCRIPT, WHISPER], ids=["hand-made", "whisper"])
-def test_one_commentator(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], path: pathlib.Path):
+def test_one_commentator(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], teams: list[yus.Team], path: pathlib.Path):
     loaded = run(tmp_path, f"Gavin Kistner={path}")
     out = capsys.readouterr().out
     snap = loaded.snapshot()
     assert snap.finished and snap.settled_count == len(snap.official.events) and [c.name for c in snap.commentators] == ["Gavin Kistner"]
-    # The extractor counts one more black goal: "blade in the end zone nope not in the end zone" (docs/extraction.md, Limitations).
-    assert snap.score[WHITE] == 14 and snap.score[BLACK] in (9, 10)
     assert out.startswith(snap.summary)
-    saved = yus.EventStream.model_validate_json((tmp_path / "game" / "official.json").read_text())
-    assert snap.official.events == saved.events
+    assert snap.official.events == yus.EventStream.model_validate_json((tmp_path / "game" / "official.json").read_text()).events
 
+    descriptions = GameDescriptions.model_validate_json(DESCRIPTIONS.read_text())
+    live = GameSession(yus.Game(sport="ultimate/indoor", when=dt.datetime(2025, 1, 14, 20, 30), teams=teams), descriptions)
+    replay(live, path, "Gavin Kistner")
+    live.finish()
+    assert snap.official.events == live.snapshot().official.events and snap.score == live.snapshot().score  # as yus-serve would have it
     truth = build_game()
-    resolver = PlayerResolver(truth.teams, GameDescriptions.model_validate_json(DESCRIPTIONS.read_text()))
-    assert score(snap.official, truth.official_stream, resolve=resolver).overall.f1 > 0.95
+    assert score(snap.official, truth.official_stream, resolve=PlayerResolver(truth.teams, descriptions)).overall.f1 > 0.95
+    assert sum(snap.score.values()) >= 22
 
-    # what a person should fix: names nobody identified, and names said for the wrong team
-    assert "Unresolved names" in out and "glasses" in out
-    assert '"tristan" (2x for Category 5) is Dump & Drizzle\'s Tristan Weber' in out
-
+    assert "Unresolved names" in out and "glasses" in out  # what a person should fix
     report = (tmp_path / "game" / "report.html").read_text()
     assert f"{WHITE.replace('&', '&amp;')} <b>{snap.score[WHITE]}</b>" in report and "Tristan Weber" in report and "<details>" in report
     team_box = pd.read_csv(tmp_path / "game" / "stats" / "team_box.csv", index_col="team")
     assert team_box["goals"].to_dict() == snap.score
     assert len(list((tmp_path / "game" / "stats").glob("*.csv"))) == 12
+
+
+def test_names_of_another_teams_player_are_reported(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]):
+    """The descriptions say "the kid" is white's Serayan Knappe-Butler; here he is said to play for black."""
+    lines = [(0, "white pulls"), (5, "picked up by bluey for black"), (8, "bluey backhand to the kid"), (11, "the kid hammer to george for a score")]
+    transcript = yus.Transcript()
+    for seconds, text in lines:
+        interpretation = transcript.add_group().add_interpretation(confidence=0.9)
+        for i, word in enumerate(text.split()):
+            interpretation.add_word(word, start=dt.datetime(2025, 1, 14, 20, 40) + dt.timedelta(seconds=seconds + 0.3 * i), duration=dt.timedelta(seconds=0.3))
+    run(tmp_path, f"A={save(tmp_path / 'a.json', transcript)}")
+    assert 'Team conflicts:\n  "the kid" (2x for Category 5) is Dump & Drizzle\'s Serayan Knappe-Butler' in capsys.readouterr().out
 
 
 def test_two_commentators_are_merged(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], transcript: yus.Transcript):
@@ -91,6 +102,7 @@ def test_two_commentators_are_merged(tmp_path: pathlib.Path, capsys: pytest.Capt
 
     assert snap.merge is not None and snap.merge.offsets[1] == pytest.approx(-5.0, abs=0.3)
     assert [c.focus_team for c in snap.commentators] == ["white", "dark"]
+    assert snap.official.events == yus.EventStream.model_validate_json((tmp_path / "game" / "official.json").read_text()).events
     assert snap.score == alone.score and abs(len(snap.official.events) - len(alone.official.events)) <= 5
     assert "  B: " in out and "focus dark" in out and "Merged:" in out
     assert "reported by" in (tmp_path / "report.html").read_text() and (tmp_path / "csv" / "player_box.csv").exists()

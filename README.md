@@ -140,7 +140,20 @@ certificate or a tunnel. Without `--ssl-*`, only a browser on the server's own c
 `games/<start time>/` (transcripts, events, the official stream and the audio), and `--load DIR` resumes it.
 An M3 Pro keeps up with two commentators, without headroom for a third ([results](docs/results.md)).
 
-### Process a Recording Afterwards
+### Process Recordings Afterwards
+
+```bash
+yus-game --team white.json --team dark.json --descriptions game-descriptions.json \
+    --commentator "Gavin=game.ogg" [--commentator "Sam=sam.ogg:dark" ...]
+```
+
+`yus-game` transcribes each recording (or reads a transcript JSON), extracts the events, resolves the names, merges the
+commentators and computes the stats. It writes `games/<start time>/`, which `yus-serve --load DIR --asr none` shows on the
+dashboard, with `report.html` (score, box scores, points, every event) and `stats/*.csv`. It lists the names nobody has
+identified and the team conflicts, to fix in the descriptions file before running it again. A recording whose clock is more
+than 20 s off another's needs `NAME=PATH@OFFSET` ([postgame.md](docs/postgame.md)).
+
+One step at a time, for one commentator:
 
 ```bash
 yus-transcribe game.ogg --team white.json --team dark.json                         # -> game.transcript.json
@@ -153,7 +166,6 @@ yus-stats game.events.json --team white.json --team dark.json --descriptions gam
 - The [descriptions file](docs/usage.md#game-description-files) says who this game's descriptions mean ("the kid" is
   Serayan Knappe-Butler). `yus-stats` lists the names still unresolved; `--format csv` or `html` writes tables.
 - `yus-score` compares events with a hand-made ground truth (see [extraction.md](docs/extraction.md#command-line)).
-- There is no command to merge several commentators' recordings; replay them into `yus-serve` instead (below).
 
 ### Replay a Recording (Demos, Tests)
 
@@ -177,6 +189,7 @@ on `/admin`. The game is timed on the day of the replay; `yus-replay` prints whe
 | [extraction.md](docs/extraction.md) | `yus-events`, `yus-score`. [event_extraction_design.md](docs/event_extraction_design.md) is the first, LLM-based proposal |
 | [merging.md](docs/merging.md) | merging commentators' event streams |
 | [stats.md](docs/stats.md) | the stats tables; `yus-stats` |
+| [postgame.md](docs/postgame.md) | `yus-game`: a game's recordings processed afterwards |
 | [session.md](docs/session.md) | `GameSession`, which runs the pipeline for one game, and its saved files |
 | [server.md](docs/server.md) | `yus-serve`, the commentate page, HTTPS, `yus-replay` |
 | [dashboard.md](docs/dashboard.md) | the live stats dashboard |

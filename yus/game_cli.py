@@ -28,6 +28,7 @@ import pydantic
 
 import yus
 from yus.processing.event_unification import GameDescriptions, PlayerResolver
+from yus.processing.event_unification.players import mentions
 from yus.processing.stats import GameStats
 from yus.processing.transcription import transcribe as tr
 from yus.session import GameSession, GameSnapshot
@@ -151,17 +152,25 @@ def process(game: yus.Game, descriptions: GameDescriptions | None, sources: list
 
 
 def wrong_team_names(snap: GameSnapshot) -> list[str]:
-    """Unresolved names that are another team's roster player ("tristan" said for black is white's Tristan Weber): the event's team
-    is wrong, or the name needs a description."""
+    """Names said for one team that no player of it answers to, but a player of another team does ("tristan" said for black is
+    white's Tristan Weber): the event's team is wrong, or the name needs a description. From each commentator's raw events."""
     resolver = PlayerResolver(snap.game.teams, snap.descriptions)
-    commentators = [None, *(c.name for c in snap.commentators)]
+    teams = resolver.teams
+    forms: dict[tuple[int, int, str], collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    said: dict[tuple[int, int, str], set[str]] = collections.defaultdict(set)
+    for c in snap.commentators:
+        for team, name in mentions(snap.raw[c.name]):
+            here = resolver.team_index(team)
+            if here is None or resolver.resolve(name, team, c.name) in teams[here].players:
+                continue
+            for i, other in enumerate(teams):
+                if i != here and (player := resolver.resolve(name, other.names[0], c.name)) in other.players:
+                    forms[(here, i, player)][name] += 1
+                    said[(here, i, player)].add(c.name)
     found = []
-    for team, name, count in snap.unresolved:
-        here = resolver.team_index(team)
-        for i, other in enumerate(snap.game.teams):
-            player = next((p for who in commentators if (p := resolver.resolve(name, other.names[0], who)) in other.players), None) if i != here else None
-            if player:
-                found.append(f'"{name}" ({count}x for {team}) is {other.names[0]}\'s {player}')
+    for (here, i, player), counts in sorted(forms.items(), key=lambda item: -item[1].total()):
+        by = f", by {' and '.join(sorted(said[(here, i, player)]))}" if len(snap.commentators) > 1 else ""
+        found.append(f'"{counts.most_common(1)[0][0]}" ({counts.total()}x for {teams[here].names[0]}{by}) is {teams[i].names[0]}\'s {player}')
     return found
 
 
