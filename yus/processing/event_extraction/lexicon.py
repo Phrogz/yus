@@ -30,6 +30,7 @@ class Tag(enum.Enum):
     CAUGHT = "caught"
     SCORE = "score"
     NOSCORE = "no score"
+    NOT_IN = "not in"  # takes a score back: "not in the end zone", "not a score"
     DROP = "dropped"
     THROWAWAY = "throws it away"
     DEFENSE = "defense"
@@ -44,7 +45,7 @@ class Tag(enum.Enum):
     HAS = "has it"
     LINEUP = "line-up"
     IS = "is"  # "red shorts is kaia"
-    CORRECT = "correction"  # "to tristan, sorry, to joe"
+    CORRECT = "correction"  # "to tristan, sorry, to joe", "nope", "that wasn't joe"
     UNK = "unknown player"
     NUM = "number"
     TEAM = "team"  # value: team index
@@ -94,7 +95,9 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.THROWV, "throws|throws it|passes|passes it|finds|hits|looks to|looking to|looks for|looking for")
     add(Tag.CAUGHT, "caught by|catch by|caught|catches|grabbed by|grab by|hauled in by|reeled in by|received by|makes the catch|make the catch|with the catch")
     add(Tag.SCORE, "for a score|for the score|for a goal|for the goal|for a point|for the point|scores|score|goal|touchdown")
-    add(Tag.NOSCORE, "no score|no goal|not caught|no catch|not a score")
+    add(Tag.NOSCORE, "no score|no goal|not caught|no catch")
+    add(Tag.NOT_IN, "not in the end zone|not in the endzone|not in end zone|not in endzone|not in the zone|not in|wasn't in|was not in|isn't in")
+    add(Tag.NOT_IN, "not a score|not a goal|not for a score|not for the score|not a point|out of the end zone|short of the end zone")
     add(Tag.DROP, "dropped|drops|drop|drop it|dropped it|turfed|turf|turfs|turfs it|out of bounds|out the back")
     add(Tag.THROWAWAY, "throwaway|throw away|thrown away|throws it away|throw it away|threw it away")
     add(Tag.DROP, "incomplete|missed|misses|overthrown|overthrows|stalled|stalled out|stall|turnover|turn over")
@@ -117,7 +120,7 @@ def _phrases() -> list[tuple[Tag, str, object]]:
     add(Tag.HAS, "gets it|has it|grabs it|got it|has the disc|gets the disc")
     add(Tag.LINEUP, "we have|we've got|we got|on the line|line up|lineup|here's the line")
     add(Tag.LINEUP, "d line|o line|d lines|o lines|the d line|the o line|with the d line|on the d line|on d line|on o line|on the o line")  # not "the d"
-    add(Tag.CORRECT, "sorry|i mean|no wait|wait no|correction|or rather|my bad")
+    add(Tag.CORRECT, "sorry|i mean|no wait|wait no|correction|or rather|my bad|my mistake|scratch that|nope|no|actually|er|wait|oops|whoops")
     add(Tag.IS, "is|is actually|is really|is named|is called|name is")
     add(Tag.UNK, "somebody|someone|some one|some body|i dunno|i don't know|dunno|don't know|unknown|who knows|not sure|nobody")
     add(Tag.NUM, "zero|nothing|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|all|apiece|each|game point")

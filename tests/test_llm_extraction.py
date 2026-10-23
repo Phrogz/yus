@@ -104,7 +104,7 @@ def test_only_uncertain_groups_are_sent(teams: list[yus.Team]):
     assert body["model"] == "test" and body["stream"] is False and body["options"]["temperature"] == 0 and body["format"]["required"] == ["correct"]
     question = body["messages"][-1]["content"]
     assert 'Utterance: "flick to tristan in the end zone nope not in the end zone"' in question and "Checked because: a correction" in question
-    assert '"result":"score"' in question and "held by kaia" in question  # who threw the throw still open
+    assert '"result":"caught"' in question and "held by kaia" in question  # the rules took the score back; who threw the throw still open
 
 
 def test_nothing_is_sent_without_reason_and_rosters_count_as_known(teams: list[yus.Team]):
@@ -117,13 +117,13 @@ def test_nothing_is_sent_without_reason_and_rosters_count_as_known(teams: list[y
 
 
 def test_a_retracted_score_gives_the_disc_back(teams: list[yus.Team]):
-    texts = [FIRST, "flick to tristan in the end zone nope not in the end zone", "backhand to joe"]
+    texts = [FIRST, "flick to tristan in the end zone, wait, he stepped out.", "backhand to george"]
     rules = [brief(e) for e in extract_events(yus.Transcript(groups=groups(*texts)), teams).events]
-    assert rules == [("Throw", "white", "kaia", "tristan", "CS"), ("Throw", "dark", None, "joe", "C")]  # the rules never retract
+    assert rules == [("Throw", "white", "kaia", "tristan", "CS"), ("Throw", "dark", None, "george", "C")]  # the rules keep this score
     answer = '{"correct":false,"events":[{"kind":"throw","team":"white","player":"kaia","receiver":"tristan","type":"flick","result":"caught"}]}'
     extractor = run(teams, texts, replying(answer))
     assert [call.outcome for call in extractor.calls] == ["revised"]
-    assert [brief(e) for e in extractor.events] == [("Throw", "white", "kaia", "tristan", "C"), ("Throw", "white", "tristan", "joe", "C")]
+    assert [brief(e) for e in extractor.events] == [("Throw", "white", "kaia", "tristan", "C"), ("Throw", "white", "tristan", "george", "C")]
     assert extractor.events[0].type == ThrowType.FLICK and extractor.events[0].when == NOW + dt.timedelta(seconds=5)  # type: ignore[attr-defined]
     assert extractor.answers == {1: extractor.events[:1]}
 
@@ -267,7 +267,7 @@ def open_gates(assistant: Gated, extractor: AssistedExtractor, final: list[yus.E
 
 
 def test_live_answers_revise_events_later_and_final_events_never_change(teams: list[yus.Team]):
-    texts = [FIRST, "flick to tristan in the end zone nope not in the end zone", "backhand to joe", "flick to red shorts", "dump to kaia", "huck to joe"]
+    texts = [FIRST, "flick to tristan in the end zone, wait, he stepped out.", "backhand to george", "flick to red shorts", "dump to kaia", "huck to joe"]
     assistant = Gated(drop_new_names, budget=60)
     extractor = AssistedExtractor(EventExtractor(teams), assistant)
     final: list[yus.Event] = []
@@ -275,9 +275,9 @@ def test_live_answers_revise_events_later_and_final_events_never_change(teams: l
     for item in items[:3]:
         extractor.feed(item)
     assert len(assistant.asked) == 1 and extractor.final_count == 0  # the correction's events wait for the answer
-    assert brief(extractor.events[1]) == ("Throw", "dark", None, "joe", "C")  # meanwhile the rules' reading shows
+    assert brief(extractor.events[1]) == ("Throw", "dark", None, "george", "C")  # meanwhile the rules' reading shows
     final = open_gates(assistant, extractor, final)
-    assert brief(extractor.events[1]) == ("Throw", "white", "tristan", "joe", "C")  # replayed after the revision
+    assert brief(extractor.events[1]) == ("Throw", "white", "tristan", "george", "C")  # replayed after the revision
     for item in items[3:]:
         extractor.feed(item)
         assert extractor.events[: len(final)] == final

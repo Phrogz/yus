@@ -585,7 +585,7 @@ def test_replay_streams_audio_to_a_running_server(game, tmp_path):
     assert before <= result.start <= before + dt.timedelta(seconds=2)  # the first sample's capture time, which the server stamps
     assert dt.timedelta(0) <= factory.made[0].start - result.start < dt.timedelta(seconds=1)
     assert [line["text"] for line in result.last["transcript"]] == PHRASES
-    assert result.last["summary"] == "Dump & Drizzle 1, Category 5 0"
+    assert result.last["summary"] == "Dump & Drizzle 1, Category 5 0 (2 provisional events)"  # the scoring group waits for the next one
     (transcriber,) = factory.made
     assert transcriber.flushed and np.allclose(np.concatenate(transcriber.feeds), samples, atol=1 / 32768)
     assert (tmp_path / "session.json").exists()

@@ -3,8 +3,11 @@
 Each group is tagged (see `lexicon`) and parsed left to right by a small state machine that remembers which team has the disc,
 who holds it, and at most one throw whose outcome is not yet known. That throw stays provisional until the commentary settles it:
 an explicit outcome ("dropped", "deed by", "for a score", "caught by"), the next throw, a pickup, or `timeout` seconds of silence.
-Everything else is final once its group has been parsed. Player names are kept as spoken, in lower case; event unification's
-PlayerResolver maps them to players later. Teams are written as one of the team's names (see `team_label`).
+Everything else is final once its group has been parsed, except that a group in which a throw scored stays provisional until the
+next group (or the timeout): a correction there ("nope, not in the end zone") can still take the score back. A correction that
+reaches an event already finished parses again from before it, so possession follows the corrected event. Player names are kept
+as spoken, in lower case; event unification's PlayerResolver maps them to players later. Teams are written as one of the team's
+names (see `team_label`).
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ EVENT_TAGS = frozenset({Tag.TYPE, Tag.DIR, Tag.TO, Tag.THROWV, Tag.CAUGHT, Tag.D
 THROW_STARTS = (Tag.TYPE, Tag.DIR, Tag.TO, Tag.THROWV, Tag.THROWAWAY)
 CHATTER = frozenset({Tag.FILLER, Tag.NAME, Tag.UNK, Tag.NUM})  # what an identification takes with it when alone: "pikachu is killing it tonight"
 TIES = frozenset({Tag.NAME, Tag.UNK, Tag.PICKUP, Tag.CHECKIN, Tag.TO, Tag.DEFENSE, Tag.INTERCEPT})  # what a bare team name may follow
+RESTATED = frozenset({None, Tag.BOUNDARY, Tag.TO, Tag.CORRECT, Tag.NAME, Tag.TEAM, Tag.TEAMREF})  # what may follow a name that replaces another
+NEGATIONS = frozenset({"not", "wasn't", "isn't", "wasnt", "isnt"})  # "not joe", "that wasn't joe"
 
 
 class Association(NamedTuple):
@@ -57,6 +62,8 @@ class _Throw:
     ez_in: bool = False
     ez_to: bool = False
     decisive: bool = False  # outcome stated: final at the end of this group
+    stated: bool = False  # its team was said ("for dark", "white picks it up"), not inferred
+    backed: bool = False  # its thrower caught the team's last pass, which backs the team in possession
 
     def open_for_receiver(self) -> bool:
         return not self.receiver_set and self.completed is not False
@@ -79,7 +86,16 @@ class _Defense:
 class _Group:
     items: list[Item]
     subject: _Throw | _Defense | str | None = None  # what a following "for dark" refers to ("pickup", or "lineup" for "d-line ...")
-    correcting: bool = False  # after "sorry": the next receiver replaces the last one
+    correcting: bool = False  # after "sorry": the next receiver or name replaces the last one
+    wrong: str | None = None  # a name said not to be right: "that wasn't joe"
+
+
+class _Replay(Exception):  # noqa: N818 (not an error)
+    """A correction took back a fact of an event already finished: parse `groups` and the current group again from `base`."""
+
+    def __init__(self, base: EventExtractor, groups: list[yus.TranscriptGroup]):
+        super().__init__()
+        self.base, self.groups = base, groups
 
 
 def team_label(team: yus.Team) -> str:
@@ -124,6 +140,15 @@ class EventExtractor:
         self._held: list[Token] = []  # a team reference cut by the end of the last group ("picks it up for" | "White.")
         self._held_subject: str | None = None
         self._last_end: dt.datetime | None = None
+        self._stated = False  # possession was said, not inferred, since the last throw ended
+        self._passed = False  # the holder caught the last throw
+        self._said: str | None = None  # the last name said, for "sorry, that was connor"
+        self._seen: set[str] = set()  # names events used (normalized)
+        self._unsettled: list[_Throw | _Defense] = []  # the last group's events, while a correction in the next one may change them
+        self._window: tuple[EventExtractor, list[yus.TranscriptGroup]] | None = None  # the state before the unsettled group, and it
+        self._start: EventExtractor | None = None  # the state before the group being parsed
+        self._late: dict[tuple[str, dt.datetime], dict[str, object]] = {}  # corrections of finished events: (kind, when) -> changes
+        self._cues: set[tuple[dt.datetime, str]] = set()  # the words that made them
         self.last_items: list[Item] = []  # the last group's items, as parsed (line-ups and identifications removed)
         self._handlers = self._bind_handlers()
 
@@ -143,6 +168,7 @@ class EventExtractor:
             Tag.INTERCEPT: self._on_defense,
             Tag.DROP: self._on_drop,
             Tag.NOSCORE: self._on_drop,
+            Tag.NOT_IN: self._on_not_in,
             Tag.THROWAWAY: self._on_throwaway,
             Tag.SCORE: self._on_score,
             Tag.EZ_IN: self._on_end_zone,
@@ -157,7 +183,7 @@ class EventExtractor:
     @property
     def events(self) -> list[yus.Event]:
         """Final events, then provisional ones."""
-        return self._final + ([self._render(self._pending)] if self._pending is not None else [])
+        return self._final + [self._render(record) for record in self._unsettled] + ([self._render(self._pending)] if self._pending is not None else [])
 
     @property
     def final_count(self) -> int:
@@ -166,10 +192,21 @@ class EventExtractor:
 
     def feed(self, group: yus.TranscriptGroup) -> None:
         """Parse the next transcript group (its first interpretation)."""
-        words = group.words
-        if not words:
+        if not group.words:
             return
+        todo = [group]
+        while todo:
+            current = todo.pop(0)
+            try:
+                self._feed(current)
+            except _Replay as replay:
+                self._restore(replay.base)
+                todo = [*replay.groups, current, *todo]
+
+    def _feed(self, group: yus.TranscriptGroup) -> None:
+        words = group.words
         self.advance(words[0].start)
+        self._start = self._snapshot()
         items = self._tagger.tag(self._held + tokenize(words))
         subject = self._held_subject if self._held and items and items[0].tag is Tag.TEAMREF else None  # "... picks it up for" | "white"
         self._held, self._held_subject = [], None
@@ -189,17 +226,23 @@ class EventExtractor:
         if pending is not None and (pending.decisive or (pending.completed is True and not pending.ez_to)):
             self._finish_throw(pending)  # a catch toward the end zone waits: a pickup by the other team next means it scored
         self._last_end = max(word.start + word.duration for word in words)
-        self._commit()
+        self._final.extend(self._render(record) for record in self._unsettled)  # the group before's: no longer correctable
+        if any(isinstance(record, _Throw) and record.scored for record in self._done):
+            self._unsettled, self._window = self._done, (self._start, [group])  # a score waits for the next group
+        else:
+            self._final.extend(self._render(record) for record in self._done)
+            self._unsettled, self._window = [], None
+        self._done, self._start = [], None
 
     def advance(self, now: dt.datetime) -> None:
         """Note that the transcript is complete up to `now` (transcript time, not wall-clock time): after more than `timeout`
-        seconds without words, the provisional throw becomes final as it stands."""
+        seconds without words, the provisional events become final as they stand."""
         if self.timeout is None or self._last_end is None or (now - self._last_end).total_seconds() <= self.timeout:
             return
         self._carry, self._held, self._held_subject = None, [], None
         if self._pending is not None:
             self._finish_throw(self._pending)
-            self._commit()
+        self._commit()
 
     def finish(self) -> None:
         """End of the transcript: make every event final."""
@@ -226,11 +269,27 @@ class EventExtractor:
         new._tagger = self._tagger.copy()
         new._name_team = dict(self._name_team)
         new._final = list(self._final)
-        new._done = list(self._done)
+        new._done = [dataclasses.replace(record) for record in self._done]
+        new._unsettled = [dataclasses.replace(record) for record in self._unsettled]
         new._pending = dataclasses.replace(self._pending) if self._pending is not None else None
         new._held = list(self._held)
+        new._late = dict(self._late)
+        new._cues = set(self._cues)
+        new._seen = set(self._seen)
         new._handlers = new._bind_handlers()
         return new
+
+    def _snapshot(self) -> EventExtractor:
+        new = self.copy()
+        new._window = new._start = None  # no chains of snapshots: a replay never reaches back further than its own window
+        return new
+
+    def _restore(self, base: EventExtractor) -> None:
+        """Go back to the state `base` (which stays as it is); corrections already decided are kept."""
+        late, cues = self._late, self._cues
+        self.__dict__.update(base.copy().__dict__)
+        self._late, self._cues = late, cues
+        self._handlers = self._bind_handlers()
 
     def revise(self, start: int, events: list[yus.Event]) -> None:
         """Replace `events[start:]` with `events`: another reading of the groups that made them, such as an LLM's (see `llm`).
@@ -240,6 +299,9 @@ class EventExtractor:
         old = self.events[start:]
         if list(events) == old:
             return
+        if self._unsettled:  # the new reading replaces them; the next group can no longer take a score back
+            self._final.extend(self._render(record) for record in self._unsettled)
+            self._unsettled, self._window = [], None
         was_open = self._pending is not None
         self._final = self._final[:start] + list(events)
         last, previous = (events[-1] if events else None), (old[-1] if old else None)
@@ -250,6 +312,7 @@ class EventExtractor:
         else:
             self._pending = None
         if last is not None and _outcome(last) != _outcome(previous):
+            self._passed = isinstance(last, ultimate.Throw) and self._pending is None and bool(last.completed) and not last.scored and last.receiver is not None
             if self._pending is not None:
                 self.possession, self.holder = self._pending.team, self._pending.player
             elif isinstance(last, ultimate.Throw) and last.completed and not last.scored:
@@ -296,7 +359,10 @@ class EventExtractor:
         if isinstance(record, _Defense):
             return ultimate.Defense(when=record.when, team=self._label(record.team), player=record.player, intercepted=record.intercepted)
         completed = record.completed is not False
-        team = record.team if record.team is not None else self.possession
+        team = record.team
+        if record is self._pending:  # finished throws keep the team they finished with
+            team = team if record.stated else self._evidence(record, team)
+            team = team if team is not None else self.possession
         return indoor.Throw(
             when=record.when,
             team=self._label(team),
@@ -311,21 +377,35 @@ class EventExtractor:
         )
 
     def _commit(self) -> None:
-        self._final.extend(self._render(record) for record in self._done)
-        self._done.clear()
+        self._final.extend(self._render(record) for record in [*self._unsettled, *self._done])
+        self._unsettled, self._done, self._window = [], [], None
+
+    def _evidence(self, throw: _Throw, team: int | None) -> int | None:
+        """The throw's team as its thrower's and receiver's teams say (from the commentary, else the rosters), else `team`. A name
+        known only on the other team's roster means the team in possession was wrong ("power dump to tristan" after a false goal);
+        names that disagree, or names on both rosters or none, say nothing."""
+        known = {t for t in (self.team_of(throw.player), self.team_of(throw.receiver), team if throw.backed else None) if t is not None}
+        return known.pop() if len(known) == 1 else team
 
     def _finish_throw(self, throw: _Throw) -> None:
+        changes = self._late.get(("throw", throw.when))
+        if changes:
+            _change(throw, changes)
         if throw.team is None:
             for team in (self.possession, self.team_of(throw.player), self.team_of(throw.receiver)):
                 if team is not None:
                     throw.team = team
                     break
+        if not throw.stated:
+            throw.team = self._evidence(throw, throw.team)
+        self._stated = False
+        self._seen.update(normalize(name) for name in (throw.player, throw.receiver) if name)
         throw.completed = throw.completed is not False
         throw.scored = throw.completed and (throw.scored or throw.ez_in)
         if throw.completed and not throw.scored:
-            self.possession, self.holder = throw.team, throw.receiver
+            self.possession, self.holder, self._passed = throw.team, throw.receiver, throw.receiver is not None
         else:
-            self.possession, self.holder = self._other(throw.team), None
+            self.possession, self.holder, self._passed = self._other(throw.team), None, False
         self._done.append(throw)
         if self._pending is throw:
             self._pending = None
@@ -338,8 +418,43 @@ class EventExtractor:
             self._finish_throw(previous)
         player = thrower if named else self.holder
         team = self.possession if self.possession is not None else self.team_of(player)
-        self._pending = _Throw(when, team, player)
+        backed = self._passed and player is not None and normalize(player) == normalize(self.holder or "")
+        self._pending = _Throw(when, team, player, stated=self._stated and self.possession is not None, backed=backed)
         return self._pending
+
+    def _recent(self) -> list[_Throw | _Defense]:
+        """The events a correction can still change, newest first: the open throw, this group's, and the group before's while
+        they wait for this one."""
+        found: list[_Throw | _Defense] = [self._pending] if self._pending is not None else []
+        found += reversed(self._done)
+        if self._window is not None:
+            found += reversed(self._unsettled)
+        return found
+
+    def _last_throw(self) -> _Throw | None:
+        return next((record for record in self._recent() if isinstance(record, _Throw)), None)
+
+    def _retract(self, record: _Throw | _Defense, changes: dict[str, object], cue: Item) -> None:
+        """Change facts of `record` that `cue` took back: at once if it is the open throw, else by parsing again from before the
+        groups that made it, with the change made when it finishes (so later events follow it). Final events never change."""
+        if record is self._pending:
+            _change(record, changes)
+            return
+        self._cues.add((cue.start, cue.text))
+        target = ("throw" if isinstance(record, _Throw) else "defense", record.when)
+        self._late[target] = {**self._late.get(target, {}), **changes}
+        if self._window is not None:
+            raise _Replay(*self._window)
+        assert self._start is not None
+        raise _Replay(self._start, [])
+
+    def _decided(self, cue: Item) -> bool:
+        """Is `cue` a correction of a finished event, already made (the groups are being parsed again)?"""
+        return (cue.start, cue.text) in self._cues
+
+    def _mentions(self, name: str) -> bool:
+        key = normalize(name)
+        return normalize(self.holder or "") == key or any(normalize(getattr(record, attr, None) or "") == key for record in self._recent() for attr in ("player", "receiver"))
 
     def _pickup(self, name: str | None, checkin: bool = False) -> None:
         throw = self._pending
@@ -349,7 +464,7 @@ class EventExtractor:
             elif not throw.scored and throw.completed is not True:
                 throw.completed = False  # someone picks it up: the throw hit the ground
             self._finish_throw(throw)
-        self.holder = name
+        self.holder, self._passed = name, False
         team = self.team_of(name)
         if team is not None and not checkin:
             self.possession = team
@@ -397,7 +512,7 @@ class EventExtractor:
             if not clause[k + 1].text.endswith("'s"):  # not "the kid is kaia's brother"
                 self._identify(str(result[-1].value), str(clause[k + 1].value), explicit)
             end = k + (3 if explicit is not None else 2)
-            if all(x.tag in (Tag.FILLER, Tag.BOUNDARY) for x in result[part:-1]):  # alone: "oh, red shorts is kaia"
+            if all(x.tag in (Tag.FILLER, Tag.BOUNDARY, Tag.CORRECT) for x in result[part:-1]):  # alone: "oh, red shorts is kaia"
                 del result[-1]
                 rest = end
                 while rest < len(clause) and clause[rest].tag in CHATTER:
@@ -447,6 +562,8 @@ class EventExtractor:
         j = self._next(group.items, j)
         if j < len(group.items) and group.items[j].tag in (Tag.NAME, Tag.UNK):
             item = group.items[j]
+            if item.tag is Tag.NAME:
+                self._said = str(item.value)
             return (str(item.value) if item.tag is Tag.NAME else None), j + 1, True
         return None, j, False
 
@@ -464,15 +581,16 @@ class EventExtractor:
         if following is Tag.PULL:  # "black pulls"
             if self._pending is not None:
                 self._finish_throw(self._pending)
-            self.possession, self.holder = self._other(team), None
+            self.possession, self.holder, self._stated = self._other(team), None, True
             return j + 1
         if following is Tag.PICKUP:  # "white picks it up"
             self._pickup(None)
-            self.possession = team
+            self.possession, self._stated = team, True
             group.subject = "pickup"
             return j + 1
         if following is Tag.CHECKIN:  # "dark checks it in"
-            self.possession = team if self._pending is None else self.possession
+            if self._pending is None:
+                self.possession, self._stated = team, True
             return j + 1
         if self._tied(group, i):
             return self._on_team_ref(group, i)
@@ -495,11 +613,11 @@ class EventExtractor:
         subject = group.subject
         if subject == "lineup" or self._previous_tag(group, i) is Tag.NUM:
             return i + 1  # "d-line comes on for dark", "five four for white"
-        self.possession = team
+        self.possession, self._stated = team, True
         if isinstance(subject, _Defense):
             subject.team = team
         elif isinstance(subject, _Throw) and subject is self._pending:
-            subject.team = team
+            subject.team, subject.stated = team, True
             self._learn(subject.player, team)
         elif subject == "pickup":
             self._learn(self.holder, team)
@@ -510,6 +628,10 @@ class EventExtractor:
         name = str(item.value) if item.tag is Tag.NAME else None
         j = self._next(group.items, i + 1)
         following = group.items[j].tag if j < len(group.items) else None
+        if name is not None and following in RESTATED and self._restates(group, i, name):
+            return i + 1
+        if name is not None:
+            self._said = name
         for rule in (self._name_pickup, self._name_thrower, self._name_has, self._name_outcome, self._name_scorer, self._name_defender):
             k = rule(group, i, j, following, name)
             if k is not None:
@@ -520,6 +642,49 @@ class EventExtractor:
         elif j >= len(group.items) and name is not None:
             self._carry = item
         return i + 1
+
+    def _restates(self, group: _Group, i: int, name: str) -> bool:
+        """Handle a name that corrects another: "not joe" (remembered), then any name when joe was said, or after "sorry" in the
+        same sentence, "that was connor" or a name no open throw takes ("to joe, sorry, tristan"). Those must be known names (a
+        roster, a line-up, or an earlier event), so that "wait, he stepped out" replaces nobody. True if it did."""
+        before = tuple(item.text if item.tag is Tag.FILLER else "" for item in group.items[max(i - 2, 0) : i])
+        if before[-1:] and before[-1] in NEGATIONS:  # "not joe", "that wasn't joe"
+            group.correcting, group.wrong = True, name
+            return True
+        if not group.correcting:
+            return False
+        throw = self._pending
+        restating = before[-2:] in (("that", "was"), ("it", "was")) or before[-1:] in (("that's",), ("it's",))
+        if group.wrong is not None and normalize(group.wrong) != normalize(name) and self._mentions(group.wrong):
+            old = group.wrong
+        elif (
+            (restating or throw is None or not throw.open_for_receiver())
+            and self._said
+            and normalize(self._said) != normalize(name)
+            and (self.knows(name) or normalize(name) in self._seen)
+            and _cued(group, i)
+        ):
+            old = self._said
+        else:
+            return False
+        self._rename(group, group.items[i], old, name)
+        return True
+
+    def _rename(self, group: _Group, cue: Item, old: str, new: str) -> None:
+        """Say `new` wherever the open throw, the most recent finished event that names `old`, or who holds the disc said `old`."""
+        group.correcting, group.wrong = False, None
+        self._said = new
+        if self.holder is not None and normalize(self.holder) == normalize(old):
+            self.holder = new
+        changes: dict[str, object] = {"rename": (old, new)}
+        if self._pending is not None:
+            _change(self._pending, changes)
+        if self._decided(cue):
+            return
+        key = normalize(old)
+        record = next((r for r in self._recent() if r is not self._pending and key in (normalize(r.player or ""), normalize(getattr(r, "receiver", None) or ""))), None)
+        if record is not None:
+            self._retract(record, changes, cue)
 
     def _name_pickup(self, group: _Group, i: int, j: int, following: Tag | None, name: str | None) -> int | None:
         if following not in (Tag.PICKUP, Tag.CHECKIN):  # "stephen picks it up", "gloves taps it in"
@@ -546,7 +711,7 @@ class EventExtractor:
         if throw is not None and throw.open_for_receiver():
             throw.receiver, throw.receiver_set, throw.completed = name, True, True
         elif throw is None:
-            self.holder = name
+            self.holder, self._passed = name, False
             team = self.team_of(name)
             self.possession = team if team is not None else self.possession
         return j + 1
@@ -583,7 +748,7 @@ class EventExtractor:
         if throw is not None and throw.team != team and throw.completed is not True and not throw.scored:
             throw.completed = False
             self._finish_throw(throw)
-        self.possession = team
+        self.possession, self._stated = team, False
 
     def _on_pickup(self, group: _Group, i: int) -> int:
         name, j, found = self._take_name(group, i + 1)  # "picked up by pikachu"
@@ -612,6 +777,13 @@ class EventExtractor:
             return i + 1  # a "to" with nothing throw-like after it
         throw = self._pending
         correction = group.correcting and throw is not None and throw.receiver_set and throw.completed is not False
+        if group.correcting and found and throw is None:  # "... in the end zone. | Sorry, to tristan": the last receiver
+            group.correcting = False
+            if self._decided(group.items[i]):
+                return j
+            target = self._last_throw()
+            if target is not None and target.receiver_set:
+                self._retract(target, {"receiver": name}, group.items[i])
         group.correcting = False
         if throw is None or not (throw.open_for_receiver() or correction):
             throw = self._start_throw(group.items[i].start)
@@ -664,25 +836,48 @@ class EventExtractor:
         k = self._next(group.items, j)
         explicit = group.items[k].value if k < len(group.items) and group.items[k].tag is Tag.TEAMREF else None
         j = k + 1 if explicit is not None else j
-        thrower_team = self.possession
+        thrower_team, stated = self.possession, self._stated
         throw = self._pending
         if throw is not None:
             if throw.completed is not False:
                 throw.completed, throw.scored = False, False
-            thrower_team = throw.team if throw.team is not None else thrower_team
+            stated = throw.stated
             self._finish_throw(throw)
-        team = next((t for t in (explicit, self._other(thrower_team), self.team_of(name)) if isinstance(t, int)), None)
+            thrower_team = throw.team if throw.team is not None else thrower_team
+        defender = self.team_of(name)
+        if explicit is None and defender is not None and defender == thrower_team and not stated and (throw is None or not throw.backed and self._evidence(throw, None) is None):
+            thrower_team = self._other(defender)  # "deed by joe" and joe plays for the team that was thought to have the disc
+            if throw is not None:
+                throw.team = thrower_team
+        team = next((t for t in (explicit, self._other(thrower_team), defender) if isinstance(t, int)), None)
         defense = _Defense(item.start, team, name, item.tag is Tag.INTERCEPT)
+        changes = self._late.get(("defense", defense.when))
+        if changes:
+            _change(defense, changes)
         self._done.append(defense)
-        self.possession, self.holder = team, name if defense.intercepted else None
-        self._learn(name, explicit if isinstance(explicit, int) else None)
+        if defense.player:
+            self._seen.add(normalize(defense.player))
+        self.possession, self.holder, self._stated, self._passed = team, defense.player if defense.intercepted else None, isinstance(explicit, int), False
+        self._learn(defense.player, explicit if isinstance(explicit, int) else None)
         group.subject = defense
         return j
 
     def _on_drop(self, group: _Group, i: int) -> int:
         throw = self._pending
-        if throw is not None:
+        item = group.items[i]
+        if throw is None and (item.tag is Tag.NOSCORE or group.correcting):  # "... for a score. | No score."
+            target = self._last_throw()
+            if target is not None and target.scored and not self._decided(item):
+                self._retract(target, {"completed": False}, item)
+        elif throw is not None:
             throw.completed, throw.scored, throw.decisive = False, False, True
+        return i + 1
+
+    def _on_not_in(self, group: _Group, i: int) -> int:
+        """ "not in the end zone", "not a score": the most recent throw, if said to score, did not (it may still have been caught)."""
+        target = self._last_throw()
+        if target is not None and (target.scored or target.ez_in or target.ez_to) and not self._decided(group.items[i]):
+            self._retract(target, {"scored": False}, group.items[i])
         return i + 1
 
     def _on_throwaway(self, group: _Group, i: int) -> int:
@@ -723,6 +918,33 @@ class EventExtractor:
             else:
                 throw.hit_net = True
         return i + 1
+
+
+def _cued(group: _Group, i: int) -> bool:
+    """Is there a correction word ("sorry", "nope") before item i in its sentence?"""
+    for item in reversed(group.items[:i]):
+        if item.tag is Tag.CORRECT:
+            return True
+        if item.tag is Tag.BOUNDARY and item.value:
+            return False
+    return False
+
+
+def _change(record: _Throw | _Defense, changes: dict[str, object]) -> None:
+    """Apply a correction to an event being parsed."""
+    for field, value in changes.items():
+        if field == "rename":
+            assert isinstance(value, tuple)
+            old, new = value
+            for attr in ("player", "receiver"):
+                if normalize(getattr(record, attr, None) or "") == normalize(old):
+                    setattr(record, attr, new)
+        elif isinstance(record, _Throw) and field == "scored":  # not in the end zone
+            record.scored = record.ez_in = record.ez_to = record.decisive = False
+        elif isinstance(record, _Throw) and field == "completed":  # no score: a turnover
+            record.completed, record.scored, record.decisive = False, False, True
+        elif isinstance(record, _Throw) and field == "receiver":
+            record.receiver, record.receiver_set = value if isinstance(value, str) else None, True
 
 
 def _outcome(event: yus.Event | None) -> tuple:
