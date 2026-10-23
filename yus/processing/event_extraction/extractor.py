@@ -9,16 +9,20 @@ PlayerResolver maps them to players later. Teams are written as one of the team'
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import yus
-from yus.processing.event_extraction.lexicon import Item, Tag, Tagger, Token, tokenize
+from yus.processing.event_extraction.lexicon import Item, Tag, Tagger, Token, pieces, tokenize
 from yus.processing.event_unification.players import normalize, roster_aliases
 from yus.sports import ultimate
 from yus.sports.ultimate import ThrowDirection, ThrowType, indoor
+
+if TYPE_CHECKING:
+    from yus.processing.event_extraction.llm import AssistedExtractor, LLMAssistant
 
 COLORS = frozenset("white black dark light red blue green yellow orange purple pink grey gray navy maroon gold silver teal brown".split())
 DEFAULT_TEAMS = (yus.Team(names=["white", "light"]), yus.Team(names=["black", "dark"]))
@@ -120,7 +124,11 @@ class EventExtractor:
         self._held: list[Token] = []  # a team reference cut by the end of the last group ("picks it up for" | "White.")
         self._held_subject: str | None = None
         self._last_end: dt.datetime | None = None
-        self._handlers: dict[Tag, Callable[[_Group, int], int]] = {
+        self.last_items: list[Item] = []  # the last group's items, as parsed (line-ups and identifications removed)
+        self._handlers = self._bind_handlers()
+
+    def _bind_handlers(self) -> dict[Tag, Callable[[_Group, int], int]]:
+        return {
             Tag.TEAM: self._on_team,
             Tag.TEAMREF: self._on_team_ref,
             Tag.NAME: self._on_name,
@@ -173,6 +181,7 @@ class EventExtractor:
             carry, self._carry = self._carry, None
             items = [carry, Item(Tag.BOUNDARY, False, ",", carry.end, carry.end), *items]
         parsed = _Group(self._preprocess(items), subject=subject)
+        self.last_items = parsed.items
         self._parse(parsed)
         if self._held and parsed.subject == "pickup":
             self._held_subject = "pickup"
@@ -205,6 +214,71 @@ class EventExtractor:
             return None
         key = normalize(name)
         return self._name_team[key] if key in self._name_team else self._roster_team.get(key)
+
+    def knows(self, name: str) -> bool:
+        """Is `name` a roster name, nickname or mondegreen, or a name announced in a line-up?"""
+        return pieces(name) in self._tagger.names or normalize(name) in self._roster_team
+
+    def copy(self) -> EventExtractor:
+        """An independent copy of this extractor, to parse ahead and come back to (as `llm.AssistedExtractor` does)."""
+        new = copy.copy(self)
+        new.associations = list(self.associations)
+        new._tagger = self._tagger.copy()
+        new._name_team = dict(self._name_team)
+        new._final = list(self._final)
+        new._done = list(self._done)
+        new._pending = dataclasses.replace(self._pending) if self._pending is not None else None
+        new._held = list(self._held)
+        new._handlers = new._bind_handlers()
+        return new
+
+    def revise(self, start: int, events: list[yus.Event]) -> None:
+        """Replace `events[start:]` with `events`: another reading of the groups that made them, such as an LLM's (see `llm`).
+        Callers must not have shown `events[start:]` as final. Teams must be `labels`. When the last old event was the open throw
+        and the last new one is a throw, that throw stays open, so the next group can still settle it. Possession and who holds
+        the disc follow the new last event when its team, receiver or outcome differs from the old last event's."""
+        old = self.events[start:]
+        if list(events) == old:
+            return
+        was_open = self._pending is not None
+        self._final = self._final[:start] + list(events)
+        last, previous = (events[-1] if events else None), (old[-1] if old else None)
+        if was_open and isinstance(last, ultimate.Throw):
+            self._final.pop()
+            if last != previous:
+                self._pending = self._record(last)
+        else:
+            self._pending = None
+        if last is not None and _outcome(last) != _outcome(previous):
+            if self._pending is not None:
+                self.possession, self.holder = self._pending.team, self._pending.player
+            elif isinstance(last, ultimate.Throw) and last.completed and not last.scored:
+                self.possession, self.holder = self._index(last.team), last.receiver
+            elif isinstance(last, ultimate.Throw):
+                self.possession, self.holder = self._other(self._index(last.team)), None
+            elif isinstance(last, ultimate.Defense):
+                self.possession, self.holder = self._index(last.team), last.player if last.intercepted else None
+
+    def _index(self, label: str | None) -> int | None:
+        return self.labels.index(label) if label in self.labels else None
+
+    def _record(self, throw: ultimate.Throw) -> _Throw:
+        """An open throw from a throw event: a catch that did not score stays unsettled, as the rules leave one."""
+        settled = throw.scored or not throw.completed
+        return _Throw(
+            when=throw.when,
+            team=self._index(throw.team),
+            player=throw.player,
+            type=throw.type,
+            direction=throw.direction,
+            receiver=throw.receiver,
+            receiver_set=throw.receiver is not None,
+            completed=throw.completed if settled else None,
+            scored=throw.scored,
+            hit_wall=getattr(throw, "hit_wall", False),
+            hit_net=getattr(throw, "hit_net", False),
+            decisive=settled,
+        )
 
     # ------------------------------------------------------------------ events and state
 
@@ -651,6 +725,15 @@ class EventExtractor:
         return i + 1
 
 
+def _outcome(event: yus.Event | None) -> tuple:
+    """What an event says about who has the disc next."""
+    if isinstance(event, ultimate.Throw):
+        return ("throw", event.team, event.receiver, event.completed, event.scored)
+    if isinstance(event, ultimate.Defense):
+        return ("defense", event.team, event.player, event.intercepted)
+    return (type(event).__name__,)
+
+
 def _dangling_team_prefix(items: list[Item]) -> int:
     """How many items at the end are the start of a team reference that the next group may finish: "for", "on the"."""
     texts = tuple(item.text if item.tag is Tag.FILLER else "" for item in items[-2:])
@@ -659,9 +742,14 @@ def _dangling_team_prefix(items: list[Item]) -> int:
     return 2 if texts in (("for", "the"), ("on", "the")) else 0
 
 
-def extract_events(transcript: yus.Transcript, teams: list[yus.Team] | None = None, timeout: float | None = None) -> yus.EventStream:
-    """All events of a transcript: feed every group to an EventExtractor, then finish."""
-    extractor = EventExtractor(teams, timeout=timeout)
+def extract_events(transcript: yus.Transcript, teams: list[yus.Team] | None = None, timeout: float | None = None, llm: LLMAssistant | None = None) -> yus.EventStream:
+    """All events of a transcript: feed every group to an EventExtractor, then finish. With `llm`, uncertain groups also go to that
+    model, each waiting for its answer up to the assistant's budget (see `llm.AssistedExtractor`)."""
+    extractor: EventExtractor | AssistedExtractor = EventExtractor(teams, timeout=timeout)
+    if llm is not None:
+        from yus.processing.event_extraction.llm import AssistedExtractor
+
+        extractor = AssistedExtractor(extractor, llm, wait=True)
     for group in transcript.groups:
         extractor.feed(group)
     extractor.finish()

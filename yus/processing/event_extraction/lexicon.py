@@ -10,6 +10,7 @@ Punctuation from the ASR splits names and marks clause boundaries: "." "?" "!" a
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 import enum
@@ -198,6 +199,12 @@ class Tagger:
         self.longest_name = 1
         for name in known_names:
             self.add_name(name)
+
+    def copy(self) -> Tagger:
+        """A copy whose known names can grow apart from this one's (the phrase table is shared: it never changes)."""
+        new = copy.copy(self)
+        new.names = set(self.names)
+        return new
 
     def add_name(self, name: str) -> None:
         """Treat `name` as one player name wherever it is said, unless it is a phrase or a stopword."""

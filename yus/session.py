@@ -31,7 +31,7 @@ from typing import Any
 import pydantic
 
 import yus
-from yus.processing.event_extraction import EventExtractor
+from yus.processing.event_extraction import AssistedExtractor, EventExtractor, LLMAssistant
 from yus.processing.event_unification import GameDescriptions, LiveMerger, MergeResult, PlayerDescription, PlayerResolver
 from yus.processing.event_unification.players import mentions, normalize
 from yus.processing.stats import GameStats, compute_stats
@@ -153,7 +153,7 @@ class _Commentator:
     focus_team: str | None
     file: str  # file name stem under transcripts/ and events/
     transcript: yus.Transcript
-    extractor: EventExtractor
+    extractor: EventExtractor | AssistedExtractor
     pending_text: str = ""
     advanced: dt.datetime | None = None  # the latest time passed to advance()
     aware: bool | None = None  # whether the transcript's times carry a UTC offset; None until the first word
@@ -199,6 +199,7 @@ class _SavedCommentator(pydantic.BaseModel):
     focus_team: str | None = None
     pending_text: str = ""
     advanced: dt.datetime | None = None
+    llm_answers: dict[int, yus.EventStream | None] = pydantic.Field({}, description="AssistedExtractor.answers: per group sent, the LLM's events, or null.")
 
 
 class _SavedSession(pydantic.BaseModel):
@@ -233,12 +234,25 @@ class GameSession:
     being the clock reference. Merged events settle only up to the slowest commentator's progress (their last group, or their
     last advance() after a silence), so advance every commentator as their transcriber reports progress. Add every commentator
     before feeding groups: one added later can unsettle settled events.
+
+    With `llm`, groups the rules may have misread also go to that model (an AssistedExtractor per commentator). Its answers are
+    applied by add_groups(), advance() and snapshot(); a group's events stay provisional until its answer comes or the budget
+    runs out. save() keeps what was decided, so load() does not ask again.
     """
 
-    def __init__(self, game: yus.Game, descriptions: GameDescriptions | None = None, directory: pathlib.Path | str | None = None, *, timeout: float | None = TIMEOUT):
+    def __init__(
+        self,
+        game: yus.Game,
+        descriptions: GameDescriptions | None = None,
+        directory: pathlib.Path | str | None = None,
+        *,
+        timeout: float | None = TIMEOUT,
+        llm: LLMAssistant | None = None,
+    ):
         self.game = yus.Game(sport=game.sport, when=game.when, teams=list(game.teams))
         self.directory = pathlib.Path(directory) if directory is not None else None
         self.timeout = timeout
+        self.llm = llm
         self._resolver = PlayerResolver(self.game.teams, descriptions)  # replaced, never changed, so that snapshots can keep it
         self._lock = threading.RLock()
         self._commentators: dict[str, _Commentator] = {}
@@ -288,7 +302,7 @@ class GameSession:
             stem = _stem(name) or "commentator"
             file = next(f for f in (stem if i == 1 else f"{stem}-{i}" for i in itertools.count(1)) if _file_key(f) not in taken)
             transcript = yus.Transcript(game=self.game, commentator=name)
-            self._commentators[name] = _Commentator(name, focus_team, file, transcript, EventExtractor(self.game.teams, timeout=self.timeout))
+            self._commentators[name] = _Commentator(name, focus_team, file, transcript, self._extractor())
             focus = [c.focus_team for c in self._commentators.values()]
             if self._merger is not None:
                 self._merger.options["focus"] = focus
@@ -303,6 +317,7 @@ class GameSession:
             c = self._get(commentator)
             self._check_open()
             _awareness(groups, c.aware, commentator)
+            polled = self._poll()
             fed = 0
             try:
                 for group in groups:
@@ -312,6 +327,7 @@ class GameSession:
             finally:
                 if fed:
                     self._hear(c)
+                if fed or polled:
                     self._changed(data=True)
 
     def advance(self, now: dt.datetime, commentator: str | None = None) -> None:
@@ -323,7 +339,7 @@ class GameSession:
             if self._finished:
                 return
             zone = self._zone()
-            changed = False
+            changed = self._poll()
             try:
                 for c in targets:
                     when = _as(now, c.awareness(), zone)
@@ -359,7 +375,8 @@ class GameSession:
                 self._changed(data=False)
 
     def finish(self) -> None:
-        """End of the game: every event becomes final, and no more commentators, groups or pending text are taken."""
+        """End of the game: every event becomes final, and no more commentators, groups or pending text are taken. With `llm`,
+        it first waits for the answers still due, each at most until its budget runs out."""
         with self._lock:
             if self._finished:
                 return
@@ -374,6 +391,8 @@ class GameSession:
     def snapshot(self) -> GameSnapshot:
         """The game now. The same object until the next change."""
         with self._lock:
+            if self._poll():
+                self._changed(data=True)
             if self._snapshot is not None and self._snapshot.version == self._version:
                 return self._snapshot
             if self._computed is None or self._computed.data_version != self._data_version:
@@ -498,7 +517,8 @@ class GameSession:
                 timeout=self.timeout,
                 finished=self._finished,
                 commentators=[
-                    _SavedCommentator(name=c.name, file=c.file, focus_team=c.focus_team, pending_text=c.pending_text, advanced=c.advanced) for c in self._commentators.values()
+                    _SavedCommentator(name=c.name, file=c.file, focus_team=c.focus_team, pending_text=c.pending_text, advanced=c.advanced, llm_answers=_answers(c.extractor))
+                    for c in self._commentators.values()
                 ],
                 associations=self._associations,
                 merger_segments=self._merger_before,
@@ -507,15 +527,16 @@ class GameSession:
             _write_json(self.directory / "session.json", saved.model_dump(mode="json"))
 
     @classmethod
-    def load(cls, directory: pathlib.Path | str) -> GameSession:
-        """The session saved in `directory`, as it was: transcripts are fed again (events/ and official.json are not read back).
+    def load(cls, directory: pathlib.Path | str, *, llm: LLMAssistant | None = None) -> GameSession:
+        """The session saved in `directory`, as it was: transcripts are fed again (events/ and official.json are not read back), with
+        the LLM's saved answers. `llm` answers the groups to come (and any whose answer was still due when it was saved).
         Without session.json, each transcripts/*.json is a commentator (its `commentator`, else the file name), in file name order."""
         directory = pathlib.Path(directory)
         game = yus.Game.model_validate_json((directory / "game.json").read_text())
         path = directory / "descriptions.json"
         descriptions = GameDescriptions.model_validate_json(path.read_text()) if path.exists() else None
         saved, transcripts = _read_saved(directory)
-        session = cls(game, descriptions, directory, timeout=saved.timeout)
+        session = cls(game, descriptions, directory, timeout=saved.timeout, llm=llm)
         session._associations = list(saved.associations)
         for entry in saved.commentators:
             if _stem(entry.file) != entry.file or not entry.file:
@@ -523,6 +544,8 @@ class GameSession:
             session.add_commentator(entry.name, entry.focus_team)
             c = session._commentators[entry.name]
             c.file, c.pending_text, c.heard = entry.file, entry.pending_text, sum(a.commentator == entry.name for a in saved.associations)
+            if entry.llm_answers:
+                c.extractor = session._extractor({k: stream.events if stream is not None else None for k, stream in entry.llm_answers.items()})
             path = directory / "transcripts" / f"{entry.file}.json"
             transcript = transcripts[entry.file] if entry.file in transcripts else yus.Transcript.model_validate_json(path.read_text())
             _awareness(transcript.groups, None, entry.name)
@@ -546,6 +569,19 @@ class GameSession:
         return session
 
     # ------------------------------------------------------------------ internals
+
+    def _extractor(self, answers: dict[int, list[yus.Event] | None] | None = None) -> EventExtractor | AssistedExtractor:
+        """A new commentator's extractor: assisted by the LLM when there is one, or when saved answers are to be replayed."""
+        extractor = EventExtractor(self.game.teams, timeout=self.timeout)
+        return AssistedExtractor(extractor, self.llm, answers=answers) if self.llm is not None or answers else extractor
+
+    def _poll(self) -> bool:
+        """Apply the LLM answers that came in; True if any commentator's events changed."""
+        changed = False
+        for c in self._commentators.values():
+            if isinstance(c.extractor, AssistedExtractor):
+                changed |= c.extractor.poll()
+        return changed
 
     def _get(self, name: str) -> _Commentator:
         if name not in self._commentators:
@@ -603,6 +639,13 @@ class GameSession:
                 pass
             self._associations.append(HeardAssociation(commentator=c.name, team=found.team, description=found.description, name=found.name, player=player))
         c.heard = len(c.extractor.associations)
+
+
+def _answers(extractor: EventExtractor | AssistedExtractor) -> dict[int, yus.EventStream | None]:
+    """What to save of an extractor's LLM answers."""
+    if not isinstance(extractor, AssistedExtractor):
+        return {}
+    return {k: yus.EventStream(events=events) if events is not None else None for k, events in extractor.answers.items()}
 
 
 def _settled(merge: MergeResult, finals: list[int], count: int | None = None) -> int:

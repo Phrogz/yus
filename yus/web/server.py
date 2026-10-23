@@ -48,6 +48,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import yus
+from yus.processing.event_extraction.llm import DEFAULT_BUDGET, DEFAULT_URL, LLMAssistant
 from yus.processing.event_unification import GameDescriptions
 from yus.session import GameSession, GameSnapshot
 from yus.sports import ultimate
@@ -891,14 +892,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="large-v3-turbo", help="Whisper model (default: large-v3-turbo).")
     parser.add_argument("--key", help="Require this key: open pages once with ?key=KEY (kept in a cookie). For servers reachable from the internet.")
     parser.add_argument("--no-audio", action="store_false", dest="record_audio", default=True, help="Do not save commentators' audio.")
+    parser.add_argument("--llm", metavar="MODEL", help="Also send the groups the rules may have misread to this Ollama model (e.g. qwen2.5-coder:14b; off by default).")
+    parser.add_argument("--llm-url", default=DEFAULT_URL, help=f"Ollama's address (default: {DEFAULT_URL}).")
+    parser.add_argument("--llm-budget", type=float, default=DEFAULT_BUDGET, help=f"Seconds a group waits for the model's answer (default: {DEFAULT_BUDGET:g}).")
     return parser
+
+
+def llm_assistant(args: argparse.Namespace) -> LLMAssistant | None:
+    """The --llm assistant, its model loaded in the background so that the first group does not wait for it."""
+    if not args.llm:
+        return None
+    assistant = LLMAssistant(args.llm, url=args.llm_url, budget=args.llm_budget)
+
+    def warm() -> None:
+        try:
+            assistant.warm()
+            log.info("LLM %s ready at %s", args.llm, args.llm_url)
+        except (OSError, ValueError) as error:
+            log.warning("LLM %s at %s did not answer (%s): the rules' events stand until it does", args.llm, args.llm_url, error)
+
+    threading.Thread(target=warm, name="yus-llm-warm", daemon=True).start()
+    return assistant
 
 
 def open_session(args: argparse.Namespace, now: dt.datetime) -> GameSession:
     if args.load:
         if args.teams or args.descriptions:
             print("--load: using the saved game's teams and descriptions; --team and --descriptions are ignored", file=sys.stderr)
-        return GameSession.load(args.load)
+        return GameSession.load(args.load, llm=llm_assistant(args))
     if not args.teams:
         raise SystemExit("Give the teams (--team T.json, once per team), or --load a saved game")
     from yus.processing.transcription import transcribe as tr
@@ -909,7 +930,7 @@ def open_session(args: argparse.Namespace, now: dt.datetime) -> GameSession:
     descriptions = GameDescriptions.model_validate_json(args.descriptions.read_text()) if args.descriptions else None
     game = yus.Game(sport=args.sport, when=now, teams=tr.load_teams_from_files(args.teams))
     directory.mkdir(parents=True, exist_ok=True)
-    return GameSession(game, descriptions, directory)
+    return GameSession(game, descriptions, directory, llm=llm_assistant(args))
 
 
 def lan_address() -> str | None:
