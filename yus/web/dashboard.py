@@ -111,7 +111,7 @@ def create_dashboard(
 
     @app.callback(outputs, inputs, State("seen", "data"))
     def refresh(*args: Any) -> list[Any]:
-        seen = args[-1] or {}
+        seen = args[-1] if isinstance(args[-1], dict) else {}
         view = renderer.view(get_snapshot())
         if seen.get("key") == view.key:
             raise PreventUpdate
@@ -122,10 +122,11 @@ def create_dashboard(
 
         @app.callback(Output("describe-player", "options"), Input("describe-name", "value"), Input("roster", "data"))
         def player_options(choice: str | None, roster: dict[str, Any] | None) -> list[dict[str, str]]:
-            if not choice or not roster:
+            team = (_choice(choice) or ("", ""))[0]
+            entry = roster.get(team) if isinstance(roster, dict) else None
+            if not isinstance(entry, dict):
                 return []
-            team = json.loads(choice)[0]
-            candidates, players = roster.get(team, {}).get("candidates", []), roster.get(team, {}).get("players", [])
+            candidates, players = entry.get("candidates", []), entry.get("players", [])
             return [{"label": f"{player} (not named yet)", "value": player} for player in candidates] + [
                 {"label": player, "value": player} for player in players if player not in candidates
             ]
@@ -143,9 +144,9 @@ def create_dashboard(
         )
         def submit(_clicks: int | None, choice: str | None, player: str | None, label: str | None) -> tuple[Any, ...]:
             keep = (dash.no_update,) * 3
-            if not choice:
+            if (picked := _choice(choice)) is None:
                 return ("Pick a name first.", *keep)
-            team, name = json.loads(choice)
+            team, name = picked
             label = (label or "").strip() or None
             if not player and not label:
                 return ("Pick a player, or type a label for someone nobody has identified yet.", *keep)
@@ -191,6 +192,15 @@ def run_dashboard(
     thread.join()
 
 
+def _choice(value: Any) -> tuple[str, str] | None:
+    """The (team, name) a "describe-name" option's value holds (JSON), or None for no choice or a value no option has."""
+    try:
+        choice = json.loads(value) if value else None
+    except (TypeError, ValueError):
+        return None
+    return (choice[0], choice[1]) if isinstance(choice, list) and len(choice) == 2 and all(isinstance(part, str) for part in choice) else None
+
+
 class _StripPrefix:
     """WSGI middleware: a request for PREFIX/path is served as /path (with SCRIPT_NAME PREFIX), so that Dash's routes ("/") answer
     both when the app is mounted under the prefix and when it gets the whole path."""
@@ -232,8 +242,8 @@ class _Renderer:
     def view(self, snapshot: GameSnapshot) -> _View:
         with self._lock:
             last = self._snapshot
-            if self._view is not None and last is not None and (snapshot is last or (snapshot.version == last.version and snapshot.game is last.game)):
-                return self._view
+            if self._view is not None and last is not None and (snapshot is last or (snapshot.game is last.game and snapshot.version <= last.version)):
+                return self._view  # this snapshot, or an older one (polls can overtake one another): the newest view will do
             stats = snapshot.stats
             self._serial += 1
             if self._view is not None and stats is self._stats:

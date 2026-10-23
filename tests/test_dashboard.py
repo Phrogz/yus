@@ -377,6 +377,19 @@ def test_clock_uses_the_latest_commentary(game, descriptions, transcript):
     assert dashboard._mmss(expected) in board and snapshot.finished is False
 
 
+def test_an_older_snapshot_gets_the_newest_view(game, descriptions, monkeypatch):
+    """Two polls can overtake each other between get_snapshot() and rendering: an older snapshot of the same game re-renders nothing."""
+    renders = []
+    heavy = dashboard._heavy
+    monkeypatch.setattr(dashboard, "_heavy", lambda *args: renders.append(1) or heavy(*args))
+    v5, v6 = truth_snapshot(game, descriptions, version=5), truth_snapshot(game, descriptions, provisional=0, version=6)
+    renderer = dashboard._Renderer(False)
+    newest = renderer.view(v6)
+    assert renderer.view(v5) is newest and renderer.view(v6) is newest and len(renders) == 1
+    other = truth_snapshot(game.model_copy(), descriptions, version=1)  # another game: rendered, whatever its version
+    assert renderer.view(other) is not newest and len(renders) == 2
+
+
 # --- the describe form
 
 
@@ -407,6 +420,19 @@ def test_describe_form_calls_describe():
     failed = submit(client, app, name=glasses, player="Nobody")
     assert failed["describe-status"]["children"] == "Not recorded: Nobody is not on Dump & Drizzle" and "describe-name" not in failed
     assert len(calls) == 3
+
+
+@pytest.mark.parametrize("value", ["not json", json.dumps(["only"]), json.dumps([["x"], "y"]), json.dumps(5), 5, {"a": 1}])
+def test_describe_form_refuses_values_no_option_has(game, value):
+    """Only hand-made requests can send these; they get an answer, not a server error."""
+    calls = []
+    app = create_dashboard(GameSession(game).snapshot, lambda *args, **kwargs: calls.append(args))
+    client = app.server.test_client()
+    assert submit(client, app, name=value, player="Ari Weissman")["describe-status"]["children"] == "Pick a name first."
+    roster = {WHITE: {"candidates": [], "players": ["Ari Weissman"]}}
+    assert update(client, app, "describe-player.options", {"describe-name.value": value, "roster.data": roster})["describe-player"]["options"] == []
+    assert update(client, app, "describe-player.options", {"describe-name.value": json.dumps([WHITE, "glasses"]), "roster.data": [value]})["describe-player"]["options"] == []
+    assert refresh(client, app, value) is not None and not calls  # a hand-made "seen" just gets the whole view
 
 
 def test_player_choices_put_unnamed_players_first(game, descriptions):
