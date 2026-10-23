@@ -170,6 +170,18 @@ def test_pages_are_served(game):
         assert client.get("/api/state?events=x").status_code == 400
 
 
+def test_static_files_are_packaged():
+    """A wheel (uv tool install, pip install .) carries only the package data pyproject.toml declares."""
+    import fnmatch
+    import tomllib
+
+    import yus.web.server
+
+    declared = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())["tool"]["setuptools"]["package-data"]["yus.web"]
+    files = [path.relative_to(yus.web.server.STATIC.parent).as_posix() for path in yus.web.server.STATIC.iterdir()]
+    assert files and all(any(fnmatch.fnmatch(name, pattern) for pattern in declared) for name in files)
+
+
 def test_audio_becomes_transcript_events_and_state(game, tmp_path):
     factory = Factory()
     server = make_server(game, tmp_path, factory)

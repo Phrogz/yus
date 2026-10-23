@@ -37,6 +37,9 @@ yus-replay = "yus.web.replay:main"
 [tool.uv]
 package = true
 
+[tool.setuptools.package-data]
+"yus.web" = ["static/*"]  # the server's pages and scripts, also in a non-editable install
+
 [tool.ruff]
 line-length = 180
 
