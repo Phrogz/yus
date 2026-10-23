@@ -277,8 +277,9 @@ descriptions resolve through a per-game description file, which can be filled in
 A description applies only to its `team`. When no player of an event's team answers to a name (by roster or description),
 and just one player of the other team does, the name resolves to that player: the commentator, or the extractor, likely put the
 event on the wrong team. `team_conflicts()` lists those events for the caller to correct or flag; the events keep their team.
-In the two-commentator end-to-end runs, each commentator's stream had 3 to 5 such names, all right: "Deed by Joe" given to
-dark, and white's passes after a turnover was missed. Merged, 1–3 more players and 2 more receivers were right.
+A team without players in its file has no roster to rule a name out, so its names never cross. In the two-commentator
+end-to-end runs, each commentator's stream had 3 to 5 such names, all right: "Deed by Joe" given to dark, and white's passes
+put on dark after the goal that wasn't at 650 s. Merged, 1–3 more players and 2 more receivers were right.
 
 ```python
 from yus.processing.event_unification import GameDescriptions, PlayerResolver

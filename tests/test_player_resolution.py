@@ -166,13 +166,13 @@ def test_a_name_only_another_team_has_resolves_to_its_player(game: yus.Game, des
 
 def test_names_cross_teams_only_to_one_player():
     teams = [yus.Team(names=["white"], players={"Sam Lee": [], "Sam Ortiz": [], "Ana Ruiz": []}), yus.Team(names=["black"], players={"Sam Park": [], "Jo Kim": ["Jojo"]})]
-    teams.append(yus.Team(names=["red"], players={"Jo Wu": []}))
+    teams += [yus.Team(names=["red"], players={"Jo Wu": []}), yus.Team(names=["green"])]
     resolver = PlayerResolver(teams)
     resolver.describe("black", ["hat"], player="Jo Kim")
     resolver.describe("black", ["blue"], label="bluey")
     resolver.describe("white", ["red shorts"], player="Ana Ruiz", commentator="Gavin")
     names = ["sam", "jo", "jojo", "hat", "blue", "red shorts"]
-    said = itertools.product(["white", "red"], names)
+    said = itertools.product(["white", "red", "green"], names)  # green has no roster: its players are unknown, not absent
     raw = yus.EventStream(events=[ultimate.Defense(when=datetime.datetime(2025, 1, 14, 20, 40, n), team=team, player=name) for n, (team, name) in enumerate(said)])
     conflicts = resolver.team_conflicts(raw, "Gavin")
     assert {(c.team, c.name): resolver.resolve_event(raw.events[c.event], "Gavin").player for c in conflicts} == {

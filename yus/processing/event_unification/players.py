@@ -189,9 +189,10 @@ class PlayerResolver:
 
     def _resolve(self, name: str | None, index: int | None, commentator: str | None) -> tuple[str | None, int | None]:
         """The name resolved for team `index`, and the index of another team when it resolved to that team's player instead:
-        when nobody on team `index` answers to it, and just one player of all the other teams does."""
+        when nobody on team `index` answers to it, and just one player of all the other teams does. A team without a roster
+        can't say nobody answers."""
         answers = self._answers(name, index, commentator)
-        if answers or name is None or index is None:
+        if answers or name is None or index is None or not self.teams[index].players:
             return (next(iter(answers)) if len(answers) == 1 else name), None
         others = [(player, j) for j in range(len(self.teams)) if j != index for player in self._answers(name, j, commentator)]
         return others[0] if len(others) == 1 and others[0][0] in self.teams[others[0][1]].players else (name, None)
