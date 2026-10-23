@@ -19,7 +19,7 @@ no color name. `PlayerResolver.team_index` and the scorer accept any of a team's
 
 ```bash
 yus-events game.transcript.json --team white.json --team dark.json [-o game.events.json] [--timeout 6]
-yus-score game.events.json [--gt truth.json] [--team T.json ...] [--resolve | --descriptions D.json] [--start T] [--stop T] [-v] [--json]
+yus-score game.events.json [--gt truth.json] [--team T.json ...] [--resolve | --descriptions D.json] [--start T] [--stop T] [--shift FROM TO] [-v] [--json]
 ```
 
 - `yus-events` writes `<transcript stem>.events.json` and prints a summary: counts, goals per team, and spoken identifications.
@@ -32,6 +32,8 @@ yus-score game.events.json [--gt truth.json] [--team T.json ...] [--resolve | --
     split and `--start 463.3` is the test split.
   - `--resolve` maps names to players with `PlayerResolver` on both sides. `--descriptions` does the same and also uses a
     per-game descriptions file.
+  - `--shift FROM TO` moves the predicted times by `TO - FROM` first. A game replayed through `yus-serve` is timed on the day
+    of the replay: give the time `yus-replay` says it stamped the start of the file, and the recording's start.
   - `-v` lists misses, false positives and field mismatches.
   - Unreadable or invalid files print an error and exit with status 1.
 

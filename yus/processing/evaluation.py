@@ -2,7 +2,7 @@
 
 Exposed as the yus-score command-line tool:
 
-    yus-score PRED.json [--gt GT.json] [--team T.json ...] [--resolve] [--descriptions D.json] [--start T] [--stop T] [-v] [--json]
+    yus-score PRED.json [--gt GT.json] [--team T.json ...] [--resolve] [--descriptions D.json] [--start T] [--stop T] [--shift FROM TO] [-v] [--json]
 
 How events are paired: both streams are sorted by time, then a monotone (order-keeping, never crossing) alignment pairs predicted
 events with true ones of the same type at most `tolerance` seconds apart. It maximizes the number of pairs first, then minimizes
@@ -197,6 +197,7 @@ def score(
     teams: list[yus.Team] | None = None,
     resolve: PlayerResolver | Resolve | None = None,
     strict_type: bool = False,
+    shift: dt.timedelta | None = None,
 ) -> Score:
     """Score `predicted` events against `truth` (each an EventStream, a list of events or event dicts, or a JSON path; see load_events).
 
@@ -204,11 +205,14 @@ def score(
     seconds after `t0`. t0 defaults to the earliest true event. Any time may be naive or carry a UTC offset (see naive_clock).
     teams make team names synonyms ("dark" == "Category 5"); a PlayerResolver given as `resolve` supplies its teams when `teams` is
     None. `resolve` maps names on both sides before comparing. strict_type requires identical "__type__" tags (indoor.Throw !=
-    ultimate.Throw); by default only the class name counts.
+    ultimate.Throw); by default only the class name counts. `shift` is added to every predicted time first, e.g. to score a live
+    replay of a recording, timed on the day it was replayed, against the recording's truth.
     """
     warnings: list[str] = []
     truth_events = load_events(truth, warnings, "truth")
     predicted_events = load_events(predicted, warnings, "predicted")
+    if shift:
+        predicted_events = [event.model_copy(update={"when": event.when + shift}) for event in predicted_events]
     if isinstance(resolve, PlayerResolver):
         teams = resolve.teams if teams is None else teams
         resolve = resolve.resolve_event
@@ -582,6 +586,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--t0", help="time that seconds in --start/--stop count from (default: first word of the <stem>-transcript.json beside the truth, else the first true event)"
     )
+    parser.add_argument(
+        "--shift",
+        nargs=2,
+        metavar=("FROM", "TO"),
+        help="move predicted times by TO - FROM (ISO datetimes), e.g. the time yus-replay says it stamped a recording's start, and the recording's start",
+    )
     parser.add_argument("--strict-type", action="store_true", help='require identical "__type__" tags')
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     parser.add_argument("--verbose", "-v", action="store_true", help="list misses, false positives and field mismatches")
@@ -603,8 +613,18 @@ def main(argv: list[str] | None = None) -> int:
             resolve = lambda event: resolver.resolve_event(event, args.commentator)  # noqa: E731
         first = transcript_start(args.gt)
         t0 = parse_time(args.t0, first or dt.datetime(2000, 1, 1)) if args.t0 else first
+        shift = dt.datetime.fromisoformat(args.shift[1]) - dt.datetime.fromisoformat(args.shift[0]) if args.shift else None
         result = score(
-            args.predicted, args.gt, tolerance=args.tolerance, start=args.start, stop=args.stop, t0=t0, teams=teams or None, resolve=resolve, strict_type=args.strict_type
+            args.predicted,
+            args.gt,
+            tolerance=args.tolerance,
+            start=args.start,
+            stop=args.stop,
+            t0=t0,
+            teams=teams or None,
+            resolve=resolve,
+            strict_type=args.strict_type,
+            shift=shift,
         )
     except (OSError, ValueError) as error:  # unreadable or invalid files and times (pydantic's and json's errors are ValueErrors)
         print(f"Error: {error}", file=sys.stderr)

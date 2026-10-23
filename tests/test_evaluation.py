@@ -180,6 +180,12 @@ def test_cli(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], truth: 
     assert "OVERALL" in capsys.readouterr().out  # with only white's team file, "dark" and "black" differ
     assert evaluation.main([str(predicted), "--descriptions", str(DATA / "gruindoor_20250114T2030-descriptions.json"), "-v"]) == 0
     assert "FIELD MISMATCHES (paired events with a differing field): 0" in capsys.readouterr().out
+    replayed = tmp_path / "replayed.json"  # a live replay of the recording, timed on the day it was replayed
+    replayed.write_text(yus.EventStream(events=[e.model_copy(update={"when": e.when + dt.timedelta(days=640, seconds=3.5)}) for e in truth]).model_dump_json())
+    assert evaluation.main([str(replayed), "--json", "--shift", "2026-10-16T20:31:00.5", "2025-01-14T20:30:57"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["exact"]["f1"] == 1.0 and result["timing"]["max_abs"] == 0.0
+    assert evaluation.main([str(replayed), "--json"]) == 0 and json.loads(capsys.readouterr().out)["overall"]["tp"] == 0
 
 
 def test_times_with_and_without_utc_offsets_compare():
