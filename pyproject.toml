@@ -39,4 +39,6 @@ package = true
 
 [tool.ruff]
 line-length = 180
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "C90"]

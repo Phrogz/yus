@@ -217,5 +217,6 @@ and its descriptions file.
   - A crash during `save()` can leave files from two versions, though no file is ever half-written.
   - `pending_text` is saved, so it can be stale after a restart until the transcriber sets it again.
 - **Live end-to-end.** `test_live_transcription_of_the_real_audio_feeds_a_session` runs LiveTranscriber on the real audio into
-  a session, advancing it to `LiveTranscriber.horizon` (`YUS_SLOW_TESTS=1`). It has not been run yet: the GPU was busy with
-  another agent's live-transcription measurements.
+  a session, advancing it to `LiveTranscriber.horizon` (`YUS_SLOW_TESTS=1`, about 90 s). On an M3 Pro, its first 180 s gave
+  event F1 0.897 (exact 0.552) up to 175 s, and the slowest snapshot with stats took 12 ms. The opening minutes are the
+  hardest: the same 175 s of the real-time run in [results.md](results.md) scored 0.947 (exact 0.632).
