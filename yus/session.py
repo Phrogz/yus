@@ -38,7 +38,8 @@ from yus.processing.stats import GameStats, compute_stats
 from yus.sports import ultimate
 
 TIMEOUT = 6.0  # seconds without words after which an open throw becomes final (EventExtractor's timeout)
-SETTLE = 20.0  # seconds one commentator may lag another before settling waits longer (merge_streams's default `settle`)
+SETTLE = 20.0  # merge_streams's default `settle`, used before any commentator has an event
+SETTLE_MARGIN = 2.0  # seconds of slack in settling merged events: an offset LiveMerger refines, a word committed just before its horizon
 
 
 class CommentatorState(pydantic.BaseModel):
@@ -209,6 +210,7 @@ class _SavedSession(pydantic.BaseModel):
     commentators: list[_SavedCommentator] = []
     associations: list[HeardAssociation] = []
     merger_segments: list[list[tuple[int, float]] | None] | None = pydantic.Field(None, description="LiveMerger.segments as the last merge started.")
+    settled: int = pydantic.Field(0, description="Merged events kept settled (see GameSession._official).")
 
 
 class GameSession:
@@ -243,6 +245,7 @@ class GameSession:
         self._associations: list[HeardAssociation] = []
         self._merger: LiveMerger | None = None
         self._merger_before: list[list[tuple[int, float]] | None] | None = None  # its segments as the last merge started
+        self._kept: tuple[PlayerResolver, LiveMerger, int] | None = None  # merged events settled so far, with that resolver and merger
         self._finished = False
         self._version = 0
         self._floor = 0  # the least version the next change may take (load() sets it past any version given out before)
@@ -436,7 +439,13 @@ class GameSession:
         self._merger_before = copy.deepcopy(self._merger.segments)
         self._merger.options["settle"] = self._settle(streams, finals)
         merge = self._merger.merge(streams)
-        return merge.stream, _settled(merge, finals), merge
+        settled = _settled(merge, finals)
+        if self._kept is not None and self._kept[0] is self._resolver and self._kept[1] is self._merger:
+            kept = self._kept[2]  # events settled before stay settled: a refined offset can make the merge more cautious
+            if settled < kept <= len(merge.stream.events) and _settled(merge, finals, kept) == kept:
+                settled = kept
+        self._kept = (self._resolver, self._merger, settled)
+        return merge.stream, settled, merge
 
     def _team_named(self, event: yus.Event) -> yus.Event:
         """The event with its team named by the team's first name, as merged events are."""
@@ -446,9 +455,10 @@ class GameSession:
         return event.model_copy(update={"team": name})
 
     def _settle(self, streams: list[yus.EventStream], finals: list[int]) -> float:
-        """LiveMerger's `settle` for the next merge: the seconds it takes events still to come to be at most before its latest
-        event. That is SETTLE, or more when a commentator lags further. A commentator's events still to come are no earlier
-        than their progress, and their provisional raw events may still change. Infinite while a commentator's progress is unknown."""
+        """LiveMerger's `settle` for the next merge: how many seconds before its latest event the events still to come can be,
+        plus SETTLE_MARGIN. A commentator's events still to come are no earlier than their progress, and their provisional raw
+        events may still change. Negative once every commentator's progress has passed the latest event (a pause in play, the
+        end of the game), so that every event before then settles. Infinite while a commentator's progress is unknown."""
         assert self._merger is not None
         segments = self._merger.segments + [None] * (len(streams) - len(self._merger.segments))
         latest: list[tuple[dt.datetime, float]] = []
@@ -466,7 +476,7 @@ class GameSession:
         clock = _clock([when for when, _ in latest + earliest], self._zone())
         top = max(clock(when) + dt.timedelta(seconds=offset) for when, offset in latest)
         bottom = min(clock(when) + dt.timedelta(seconds=offset) for when, offset in earliest)
-        return max(SETTLE, (top - bottom).total_seconds() + 0.001)  # an event exactly at the bound is not settled, whatever the rounding
+        return (top - bottom).total_seconds() + SETTLE_MARGIN + 0.001  # an event exactly at the bound is not settled, whatever the rounding
 
     # ------------------------------------------------------------------ persistence
 
@@ -492,6 +502,7 @@ class GameSession:
                 ],
                 associations=self._associations,
                 merger_segments=self._merger_before,
+                settled=self._kept[2] if self._kept is not None else 0,
             )
             _write_json(self.directory / "session.json", saved.model_dump(mode="json"))
 
@@ -527,6 +538,7 @@ class GameSession:
             session._finished = True
         if session._merger is not None and saved.merger_segments is not None:
             session._merger.segments = [list(segments) if segments is not None else None for segments in saved.merger_segments]
+            session._kept = (session._resolver, session._merger, saved.settled)
         session._version, session._floor = saved.version, time.time_ns() // 1000  # past any version given out before, saved or not
         if len(session._associations) > len(saved.associations):
             session._changed(data=True)  # heard more: an extractor changed
@@ -593,12 +605,13 @@ class GameSession:
         c.heard = len(c.extractor.associations)
 
 
-def _settled(merge: MergeResult, finals: list[int]) -> int:
-    """The merge's settled count, cut before the first merged event made from a provisional raw event (one the extractor may revise)."""
-    for m, pair in enumerate(merge.pairs[: merge.settled]):
+def _settled(merge: MergeResult, finals: list[int], count: int | None = None) -> int:
+    """The merge's settled count (or `count`), cut before the first merged event made from a provisional raw event (one the
+    extractor may revise)."""
+    for m, pair in enumerate(merge.pairs[: merge.settled if count is None else count]):
         if any(index is not None and index >= final for index, final in zip(pair, finals)):
             return m
-    return merge.settled
+    return merge.settled if count is None else count
 
 
 def _unresolved(stream: yus.EventStream, resolver: PlayerResolver) -> list[tuple[str, str, int]]:

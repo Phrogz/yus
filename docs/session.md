@@ -62,9 +62,13 @@ deep-copied and pickled. `dataclasses.asdict` gives the fields below, but not th
   - One commentator: `settled_count` is the extractor's `final_count`. At most the one open throw is provisional.
   - Several: it is the merge's `settled`, cut before the first merged event that contains a provisional raw event.
     Merged events settle only up to the slowest commentator's progress: the start of their last group, or their last
-    `advance()` once more than `timeout` seconds without words followed that group. When that lags the newest event by more
-    than 20 s (`LiveMerger`'s own allowance), the session widens the merge's `settle` to match. While a commentator has
-    neither groups nor an `advance()`, nothing settles.
+    `advance()` once more than `timeout` seconds without words followed that group. The session sets the merge's `settle`
+    to how far that progress lags the newest event, plus 2 s (`SETTLE_MARGIN`, for a refined offset or a word committed
+    just before its horizon). Once every commentator's progress has passed the newest event (a pause in play, the end of the
+    game), everything settles but the last throw and what follows it. While a commentator has neither groups nor an
+    `advance()`, nothing settles.
+  - A merged event that settled stays settled while the commentators and descriptions stay the same, even when a refined
+    offset makes a later merge more cautious (`session.json` keeps the count).
   - After `finish()`: every event is settled.
   - Settled events never change as commentary arrives, and `settled_count` never decreases. A description does change them:
     `describe()` and spoken identifications re-resolve the names of every event, settled or not (and, with several
@@ -162,10 +166,16 @@ and its descriptions file.
 
     | second commentator's lag | 0 s | 15 s | 30 s | 60 s | 120 s |
     |---|---|---|---|---|---|
-    | provisional events, median (max) | 8 (12) | 8 (14) | 11 (17) | 17 (24) | 30 (39) |
+    | provisional events, median (max) | 5 (12) | 8 (14) | 11.5 (17) | 18 (24) | 30 (40) |
+    | ... with a fixed 20 s allowance (before) | 8 (12) | 8 (14) | 11 (17) | 17 (24) | 30 (39) |
 
     The first event settled 80 s in without lag (once `LiveMerger` had locked the offset) and 142 s in with 60 s of lag.
-    The same holds when the first commentator lags instead (30 and 90 s).
+    The same holds when the first commentator lags instead (30 and 90 s). After both fell silent, 2 events stayed
+    provisional (10 with the fixed allowance, until the next event or `finish()`).
+  - A replay of the real two-commentator run ([results.md](results.md)) at its recorded arrival times settled events a
+    median 31 s after they were said (p90 41 s), against 44 s (53 s) with the fixed allowance. 108 synthetic games with
+    offsets of −7 to +12 s, lags, a 90 s pause and clocks drifting by up to 6 ms/s never changed a settled event or lowered
+    `settled_count`; without keeping the count, a drifting clock lowered it up to 12 times a game.
 - **Speed.**
 
   | | snapshot | snapshot + stats |
@@ -190,7 +200,8 @@ and its descriptions file.
 - **Progress is trusted.** Settling assumes no commentator's words arrive earlier than their last `advance()` (or, after a
   group, earlier than that group's start). A transcriber that commits a word before its own horizon can still unsettle events.
 - **Merging.** The merge inherits `LiveMerger`'s limits:
-  - settling waits about 20–40 s, and until offsets are locked; a lagging commentator adds their lag;
+  - settling waits about 30 s (the slower commentator's transcription lag, their clock offset, `tolerance` and the next
+    throw), and until offsets are locked; a lagging commentator adds their lag;
   - its results depend on how often `snapshot()` is called, since each call merges once;
   - it is tested only on synthetic second commentators.
 - **Name scope.** A heard identification applies only to the commentator who said it. Another commentator's matching

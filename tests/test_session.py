@@ -433,6 +433,41 @@ def test_threads_feed_and_read_concurrently(game: yus.Game, transcript: yus.Tran
     assert_same_snapshot(GameSession.load(tmp_path).snapshot(), snap)
 
 
+def test_merged_events_settle_when_every_commentator_has_gone_quiet(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    """A pause in play, or the end of the game: once both commentators are complete past the last event, everything settles
+    but the last two events, which wait to see what follows them. (With a fixed 20 s allowance, the last 10 waited for the next
+    event, here as in the real two-commentator run.)"""
+    other = other_commentator(transcript, 5.0, drop=8)
+    session = GameSession(game, descriptions)
+    session.add_commentator("A")
+    session.add_commentator("B", focus_team="light")
+    snapshots = feed_in_turn(session, {"A": transcript.groups, "B": other.groups})
+    quiet = arrival(transcript.groups[-1]) + dt.timedelta(seconds=30)
+    session.advance(quiet, "A")
+    session.advance(quiet + dt.timedelta(seconds=5), "B")
+    snapshots.append(paused := session.snapshot())
+    assert paused.settled_count == len(paused.official.events) - 2 == 198
+    session.finish()
+    assert_settled_never_change(snapshots, session.snapshot())
+
+
+def test_a_drifting_clock_never_unsettles_events(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
+    """B's clock gains 4 ms a second, so LiveMerger refines B's offset as the game goes on. A refined offset makes later merges
+    more cautious, but events settled before stay settled."""
+    other = other_commentator(transcript, 5.0, drop=4)
+    start = transcript.groups[0].start
+    for word in other.words:
+        word.start += dt.timedelta(seconds=0.004 * (word.start - start).total_seconds())
+    session = GameSession(game, descriptions)
+    session.add_commentator("A")
+    session.add_commentator("B", focus_team="light")
+    snapshots = feed_in_turn(session, {"A": transcript.groups, "B": other.groups})
+    session.finish()
+    final = session.snapshot()
+    assert final.merge is not None and len(session._merger.segments[1]) > 1  # the offset was refined
+    assert_settled_never_change(snapshots, final)
+
+
 def test_a_lagging_commentator_never_unsettles_events(game: yus.Game, transcript: yus.Transcript, descriptions: GameDescriptions):
     """B's transcript arrives 90 s late (a busy GPU, say). LiveMerger alone allows 20 s."""
     other = other_commentator(transcript, 5.0, drop=8)
